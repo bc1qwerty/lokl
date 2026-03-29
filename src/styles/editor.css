@@ -1,0 +1,48 @@
+.cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+.cm-editor .cm-scroller {
+  overflow: auto;
+  padding: 12px 0;
+}
+.cm-editor .cm-content {
+  padding: 0 16px;
+}
+.cm-editor .cm-gutters {
+  background: var(--bg);
+  border-right: 1px solid var(--border-light);
+  color: var(--text-muted);
+}
+.cm-editor .cm-activeLineGutter {
+  background: var(--bg-inset);
+}
+.cm-editor .cm-activeLine {
+  background: rgba(88, 166, 255, 0.04);
+}
+.cm-editor .cm-selectionBackground {
+  background: rgba(88, 166, 255, 0.15) !important;
+}
+.cm-editor .cm-cursor {
+  border-left-color: var(--accent);
+}
+.cm-editor .cm-line {
+  line-height: 1.7;
+}
+
+/* Wiki-link decoration in editor */
+.cm-wikilink {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.cm-wikilink-bracket {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+/* Light theme overrides */
+[data-theme="light"] .cm-editor .cm-gutters {
+  background: var(--bg);
+}
