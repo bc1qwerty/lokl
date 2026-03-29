@@ -157,8 +157,8 @@
   overflow-y: auto;
 }
 
-/* Backlinks panel */
-.backlinks-panel {
+/* Backlinks + Tags panel */
+.backlinks-panel-wrapper {
   grid-column: 3;
   grid-row: 2;
   width: var(--panel-width);
@@ -166,8 +166,11 @@
   border-left: 1px solid var(--border);
   overflow-y: auto;
   transition: width 0.2s;
+  display: flex;
+  flex-direction: column;
 }
-.app-layout[data-backlinks="closed"] .backlinks-panel { width: 0; overflow: hidden; }
+.app-layout[data-backlinks="closed"] .backlinks-panel-wrapper { width: 0; overflow: hidden; }
+.backlinks-panel { flex-shrink: 0; }
 
 .backlinks-header {
   padding: 10px 12px;

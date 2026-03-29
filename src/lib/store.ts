@@ -6,7 +6,8 @@ export const vault = signal<VaultState | null>(null);
 export const fileTree = signal<FileEntry[]>([]);
 export const isLoading = signal(false);
 
-// Current file
+// Tabs
+export const openTabs = signal<string[]>([]);
 export const currentFilePath = signal<string | null>(null);
 export const currentFileContent = signal('');
 export const savedContent = signal('');
@@ -18,6 +19,26 @@ export const previewOpen = signal(true);
 export const backlinksOpen = signal(true);
 export const viewMode = signal<ViewMode>('split');
 export const searchOpen = signal(false);
+export const quickOpenOpen = signal(false);
+export const settingsOpen = signal(false);
+export const graphOpen = signal(false);
+export const contextMenu = signal<{ x: number; y: number; path: string; kind: string } | null>(null);
+
+// Settings
+export interface Settings {
+  fontSize: number;
+  sortBy: 'name' | 'modified';
+  editorLineNumbers: boolean;
+}
+const defaultSettings: Settings = { fontSize: 14, sortBy: 'name', editorLineNumbers: true };
+const stored = localStorage.getItem('lokl-settings');
+export const settings = signal<Settings>(stored ? { ...defaultSettings, ...JSON.parse(stored) } : defaultSettings);
+
+export function updateSettings(patch: Partial<Settings>) {
+  const next = { ...settings.value, ...patch };
+  settings.value = next;
+  localStorage.setItem('lokl-settings', JSON.stringify(next));
+}
 
 // Derived
 export const currentFileName = computed(() => {
@@ -37,6 +58,10 @@ export const backlinksIndex = signal<Map<string, Set<string>>>(new Map());
 // Wikilinks: path -> list of link targets
 export const wikilinksIndex = signal<Map<string, string[]>>(new Map());
 
+// Tags index: tag -> set of file paths
+export const tagsIndex = signal<Map<string, Set<string>>>(new Map());
+export const activeTagFilter = signal<string | null>(null);
+
 // All file paths for link resolution
 export const allFilePaths = computed(() => {
   const paths: string[] = [];
@@ -49,3 +74,24 @@ export const allFilePaths = computed(() => {
   collect(fileTree.value);
   return paths;
 });
+
+// Tab helpers
+export function addTab(path: string) {
+  const tabs = openTabs.value;
+  if (!tabs.includes(path)) {
+    openTabs.value = [...tabs, path];
+  }
+  currentFilePath.value = path;
+}
+
+export function closeTab(path: string) {
+  const tabs = openTabs.value.filter((t) => t !== path);
+  openTabs.value = tabs;
+  if (currentFilePath.value === path) {
+    currentFilePath.value = tabs.length > 0 ? tabs[tabs.length - 1] : null;
+    if (!currentFilePath.value) {
+      currentFileContent.value = '';
+      savedContent.value = '';
+    }
+  }
+}

@@ -3,21 +3,21 @@ import { theme, toggleTheme } from '../lib/theme';
 import {
   vault,
   currentFilePath,
-  currentFileName,
-  isDirty,
   sidebarOpen,
-  previewOpen,
   backlinksOpen,
   viewMode,
   isReadOnly,
+  graphOpen,
+  settingsOpen,
 } from '../lib/store';
 import type { ViewMode } from '../types';
 
 interface Props {
   saveStatus: 'clean' | 'dirty' | 'saving' | 'saved';
+  onDailyNote: () => void;
 }
 
-export function Toolbar({ saveStatus }: Props) {
+export function Toolbar({ saveStatus, onDailyNote }: Props) {
   const str = t.value.toolbar;
   const edStr = t.value.editor;
 
@@ -32,7 +32,6 @@ export function Toolbar({ saveStatus }: Props) {
     saveStatus === 'saving' ? 'saving' :
     saveStatus === 'saved' ? 'saved' : '';
 
-  // Breadcrumb
   const vaultName = vault.value?.name || '';
   const filePath = currentFilePath.value || '';
   const parts = filePath.split('/').filter(Boolean);
@@ -44,18 +43,16 @@ export function Toolbar({ saveStatus }: Props) {
           class={`toolbar-btn${sidebarOpen.value ? ' active' : ''}`}
           title={str.toggleSidebar}
           onClick={() => { sidebarOpen.value = !sidebarOpen.value; }}
-        >
-          &#9776;
-        </button>
+        >&#9776;</button>
         <div class="breadcrumb">
           <span>{vaultName}</span>
           {parts.map((part, i) => (
-            <>
+            <span key={i}>
               <span>/</span>
               <span style={i === parts.length - 1 ? 'color: var(--text-primary)' : ''}>
                 {part.replace(/\.md$/, '')}
               </span>
-            </>
+            </span>
           ))}
         </div>
       </div>
@@ -74,28 +71,25 @@ export function Toolbar({ saveStatus }: Props) {
                 </button>
               ))}
             </div>
-            {statusText && (
-              <span class={`save-status ${statusClass}`}>{statusText}</span>
-            )}
+            {statusText && <span class={`save-status ${statusClass}`}>{statusText}</span>}
           </>
         )}
       </div>
 
       <div class="toolbar-right">
+        <button class="toolbar-btn" title={str.dailyNote} onClick={onDailyNote}>&#128197;</button>
+        <button class="toolbar-btn" title={str.toggleGraph} onClick={() => { graphOpen.value = true; }}>&#9673;</button>
         <button
           class={`toolbar-btn${backlinksOpen.value ? ' active' : ''}`}
           title={str.toggleBacklinks}
           onClick={() => { backlinksOpen.value = !backlinksOpen.value; }}
-        >
-          &#128279;
-        </button>
+        >&#128279;</button>
+        <button class="toolbar-btn" title={str.settings} onClick={() => { settingsOpen.value = true; }}>&#9881;</button>
         <button
           class="toolbar-btn"
           title={theme.value === 'dark' ? str.themeLight : str.themeDark}
           onClick={toggleTheme}
-        >
-          {theme.value === 'dark' ? '☀' : '🌙'}
-        </button>
+        >{theme.value === 'dark' ? '\u2600' : '\uD83C\uDF19'}</button>
       </div>
     </div>
   );

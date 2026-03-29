@@ -15,6 +15,13 @@ export interface SearchResult {
 
 export type ViewMode = 'edit' | 'split' | 'preview';
 
+export interface Frontmatter {
+  title?: string;
+  tags?: string[];
+  date?: string;
+  [key: string]: unknown;
+}
+
 export type VaultMode = 'native' | 'fallback';
 
 export interface VaultState {
