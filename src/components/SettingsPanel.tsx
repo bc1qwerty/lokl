@@ -54,17 +54,16 @@ export function SettingsPanel() {
 
           <div class="settings-row">
             <label>{str.language}</label>
-            <div class="settings-control lang-buttons">
-              {supportedLangs.map((lang) => (
-                <button
-                  key={lang}
-                  class={`btn-secondary${currentLang.value === lang ? ' active' : ''}`}
-                  onClick={() => setLang(lang)}
-                  title={langLabels[lang]}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
+            <div class="settings-control">
+              <select
+                class="settings-select"
+                value={currentLang.value}
+                onChange={(e) => setLang((e.target as HTMLSelectElement).value)}
+              >
+                {supportedLangs.map((lang) => (
+                  <option key={lang} value={lang}>{langLabels[lang]}</option>
+                ))}
+              </select>
             </div>
           </div>
         </div>

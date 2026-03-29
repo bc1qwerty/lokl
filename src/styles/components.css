@@ -403,7 +403,17 @@
 .settings-row label { font-size: 13px; color: var(--text-secondary); }
 .settings-control { display: flex; align-items: center; gap: 6px; }
 .settings-value { font-size: 13px; min-width: 40px; text-align: center; font-family: var(--font-mono); }
-.lang-buttons { gap: 4px; }
+.settings-select {
+  padding: 5px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+.settings-select:focus { border-color: var(--accent); }
 
 /* Tags */
 .tags-section { border-top: 1px solid var(--border); }
