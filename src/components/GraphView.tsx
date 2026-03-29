@@ -292,11 +292,11 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
       const r = canvas!.getBoundingClientRect();
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
-      // Zoom toward mouse position
       const [wx, wy] = toWorld(mx, my);
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      zoom = Math.max(0.05, Math.min(zoom * factor, 5));
-      // Adjust camera so world point under cursor stays fixed
+      // Smooth small step: ~3% per tick, clamped to sane range
+      const raw = -e.deltaY * 0.001;
+      const step = Math.max(-0.05, Math.min(raw, 0.05));
+      zoom = Math.max(0.15, Math.min(zoom * (1 + step), 3));
       camX = wx - (mx - canvas!.width / 2) / zoom;
       camY = wy - (my - canvas!.height / 2) / zoom;
     }
