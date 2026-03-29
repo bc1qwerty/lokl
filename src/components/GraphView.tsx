@@ -25,8 +25,7 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const ctx = canvas.getContext('2d')!;
 
     const paths = allFilePaths.value;
     const links = wikilinksIndex.value;
@@ -48,20 +47,20 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
     const rect = canvas.parentElement!.getBoundingClientRect();
     canvas.width = rect.width;
     canvas.height = rect.height;
+    const W = canvas.width, H = canvas.height, HW = W / 2, HH = H / 2;
 
-    // Build nodes — spread in a large circle proportional to count
+    // Build nodes
     const nodeMap = new Map<string, Node>();
-    const n = paths.length;
-    const spreadRadius = Math.max(200, Math.sqrt(n) * 60);
+    const count = paths.length;
+    const spreadRadius = Math.max(200, Math.sqrt(count) * 60);
     let idx = 0;
     for (const p of paths) {
-      const angle = (idx / n) * Math.PI * 2;
-      const jitter = (Math.random() - 0.5) * 40;
+      const angle = (idx / count) * Math.PI * 2;
       nodeMap.set(p, {
         id: p,
         label: p.split('/').pop()?.replace(/\.md$/, '') || p,
-        x: Math.cos(angle) * spreadRadius + jitter,
-        y: Math.sin(angle) * spreadRadius + jitter,
+        x: Math.cos(angle) * spreadRadius + (Math.random() - 0.5) * 40,
+        y: Math.sin(angle) * spreadRadius + (Math.random() - 0.5) * 40,
         vx: 0, vy: 0,
         edges: edgeCount.get(p) || 0,
       });
@@ -70,6 +69,7 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
 
     if (nodeMap.size === 0) return;
     const nodes = Array.from(nodeMap.values());
+    const N = nodes.length;
 
     const isDark = theme.value === 'dark';
     const colors = {
@@ -81,142 +81,149 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
       textDim: isDark ? '#6e7681' : '#656d76',
     };
 
-    // Camera state
+    // Camera
     let camX = 0, camY = 0, zoom = 1;
-    // Auto-fit zoom to contain all nodes
-    const fitZoom = Math.min(canvas.width, canvas.height) / (spreadRadius * 2.5);
-    zoom = Math.max(0.1, Math.min(fitZoom, 1.5));
+    const fitZoom = Math.min(W, H) / (spreadRadius * 2.5);
+    zoom = Math.max(0.15, Math.min(fitZoom, 1.5));
 
     let animFrame: number;
     let dragging: Node | null = null;
     let panning = false;
     let panStartX = 0, panStartY = 0, camStartX = 0, camStartY = 0;
     let tick = 0;
-    const MAX_TICKS = 400;
+    const MAX_TICKS = 300;
+    let settled = false;
+    let needsRedraw = true;
 
-    // Simulation tuned to node count
-    const repBase = Math.max(500, n * 8);
-    const idealDist = Math.max(80, Math.sqrt(n) * 15);
+    // Simulation params scaled to node count
+    const repBase = Math.max(500, count * 8);
+    const idealDist = Math.max(80, Math.sqrt(count) * 15);
+    // Distance cutoff: skip repulsion for nodes farther than this
+    const cutoffDist = idealDist * 4;
+    const cutoffSq = cutoffDist * cutoffDist;
 
     function simulate() {
+      if (settled) return;
       tick++;
       const alpha = Math.max(0.005, 1 - tick / MAX_TICKS);
+      if (tick > MAX_TICKS) { settled = true; return; }
 
-      // Repulsion
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i], b = nodes[j];
+      const repStr = repBase * alpha;
+      const attStr = 0.04 * alpha;
+
+      // Repulsion with distance cutoff
+      for (let i = 0; i < N; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < N; j++) {
+          const b = nodes[j];
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           const distSq = dx * dx + dy * dy;
-          const dist = Math.sqrt(Math.max(distSq, 400)); // min 20px
-          const force = (repBase * alpha) / (dist * dist);
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
+          if (distSq > cutoffSq) continue; // skip far pairs
+          const dist = Math.sqrt(Math.max(distSq, 400));
+          const f = repStr / (dist * dist);
+          const fx = (dx / dist) * f;
+          const fy = (dy / dist) * f;
           a.vx -= fx; a.vy -= fy;
           b.vx += fx; b.vy += fy;
         }
       }
 
       // Attraction (edges)
-      for (const e of edges) {
+      for (let i = 0; i < edges.length; i++) {
+        const e = edges[i];
         const a = nodeMap.get(e.source)!;
         const b = nodeMap.get(e.target)!;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = (dist - idealDist) * 0.04 * alpha;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
+        const f = (dist - idealDist) * attStr;
+        const fx = (dx / dist) * f;
+        const fy = (dy / dist) * f;
         a.vx += fx; a.vy += fy;
         b.vx -= fx; b.vy -= fy;
       }
 
       // Gentle center gravity
-      for (const nd of nodes) {
-        nd.vx -= nd.x * 0.001 * alpha;
-        nd.vy -= nd.y * 0.001 * alpha;
+      const grav = 0.001 * alpha;
+      for (let i = 0; i < N; i++) {
+        const nd = nodes[i];
+        nd.vx -= nd.x * grav;
+        nd.vy -= nd.y * grav;
       }
 
       // Apply velocity
-      const maxV = 10;
-      for (const nd of nodes) {
+      for (let i = 0; i < N; i++) {
+        const nd = nodes[i];
         if (nd === dragging) continue;
         nd.vx *= 0.82;
         nd.vy *= 0.82;
         const spd = Math.sqrt(nd.vx * nd.vx + nd.vy * nd.vy);
-        if (spd > maxV) { nd.vx = (nd.vx / spd) * maxV; nd.vy = (nd.vy / spd) * maxV; }
+        if (spd > 10) { nd.vx = (nd.vx / spd) * 10; nd.vy = (nd.vy / spd) * 10; }
         nd.x += nd.vx;
         nd.y += nd.vy;
       }
-    }
-
-    // World → screen transform
-    function toScreen(wx: number, wy: number): [number, number] {
-      return [
-        (wx - camX) * zoom + canvas!.width / 2,
-        (wy - camY) * zoom + canvas!.height / 2,
-      ];
-    }
-    // Screen → world
-    function toWorld(sx: number, sy: number): [number, number] {
-      return [
-        (sx - canvas!.width / 2) / zoom + camX,
-        (sy - canvas!.height / 2) / zoom + camY,
-      ];
+      needsRedraw = true;
     }
 
     function draw() {
-      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+      if (!needsRedraw) return;
+      needsRedraw = false;
+
+      ctx.clearRect(0, 0, W, H);
 
       // Edges
-      ctx!.lineWidth = Math.max(0.5, zoom);
-      ctx!.strokeStyle = colors.edge;
-      for (const e of edges) {
+      ctx.strokeStyle = colors.edge;
+      ctx.lineWidth = Math.max(0.5, zoom);
+      ctx.beginPath();
+      for (let i = 0; i < edges.length; i++) {
+        const e = edges[i];
         const a = nodeMap.get(e.source)!;
         const b = nodeMap.get(e.target)!;
-        const [ax, ay] = toScreen(a.x, a.y);
-        const [bx, by] = toScreen(b.x, b.y);
-        ctx!.beginPath();
-        ctx!.moveTo(ax, ay);
-        ctx!.lineTo(bx, by);
-        ctx!.stroke();
+        const ax = (a.x - camX) * zoom + HW;
+        const ay = (a.y - camY) * zoom + HH;
+        const bx = (b.x - camX) * zoom + HW;
+        const by = (b.y - camY) * zoom + HH;
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
       }
+      ctx.stroke();
 
       // Nodes
       const active = currentFilePath.value;
-      for (const nd of nodes) {
-        const [sx, sy] = toScreen(nd.x, nd.y);
-        // Cull off-screen
-        if (sx < -50 || sx > canvas!.width + 50 || sy < -50 || sy > canvas!.height + 50) continue;
+      const showLabels = zoom > 0.4;
+      const showAllLabels = zoom > 1;
+
+      for (let i = 0; i < N; i++) {
+        const nd = nodes[i];
+        const sx = (nd.x - camX) * zoom + HW;
+        const sy = (nd.y - camY) * zoom + HH;
+        if (sx < -50 || sx > W + 50 || sy < -50 || sy > H + 50) continue;
 
         const isActive = nd.id === active;
         const hasEdge = nd.edges > 0;
         const baseR = isActive ? 7 : hasEdge ? Math.min(3 + nd.edges, 8) : 2.5;
-        const r = baseR * zoom;
+        const r = Math.max(baseR * zoom, 1.5);
 
-        ctx!.beginPath();
-        ctx!.arc(sx, sy, Math.max(r, 1.5), 0, Math.PI * 2);
-        ctx!.fillStyle = isActive ? colors.nodeActive : hasEdge ? colors.node : colors.nodeOrphan;
-        ctx!.fill();
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, 6.283);
+        ctx.fillStyle = isActive ? colors.nodeActive : hasEdge ? colors.node : colors.nodeOrphan;
+        ctx.fill();
 
-        // Labels — show when zoomed in enough or for active/connected nodes
-        const showLabel = zoom > 0.4 && (isActive || hasEdge);
-        const showAllLabels = zoom > 1;
-        if (showLabel || showAllLabels) {
-          const fontSize = Math.max(8, (isActive ? 12 : 10) * zoom);
-          ctx!.font = `${isActive ? 'bold ' : ''}${fontSize}px system-ui`;
-          ctx!.fillStyle = isActive || hasEdge ? colors.text : colors.textDim;
-          ctx!.textAlign = 'center';
-          ctx!.fillText(nd.label, sx, sy + Math.max(r, 1.5) + fontSize + 2);
+        if (showLabels && (isActive || hasEdge) || showAllLabels) {
+          const fs = Math.max(8, (isActive ? 12 : 10) * zoom);
+          ctx.font = `${isActive ? 'bold ' : ''}${fs}px system-ui`;
+          ctx.fillStyle = isActive || hasEdge ? colors.text : colors.textDim;
+          ctx.textAlign = 'center';
+          ctx.fillText(nd.label, sx, sy + r + fs + 2);
         }
       }
 
       // Zoom indicator
-      ctx!.fillStyle = colors.textDim;
-      ctx!.font = '11px system-ui';
-      ctx!.textAlign = 'left';
-      ctx!.fillText(`${Math.round(zoom * 100)}%`, 12, canvas!.height - 12);
+      ctx.fillStyle = colors.textDim;
+      ctx.font = '11px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(`${Math.round(zoom * 100)}%`, 12, H - 12);
     }
 
     function loop() {
@@ -228,25 +235,31 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
 
     // --- Interaction ---
 
+    function reheat() {
+      settled = false;
+      tick = Math.min(tick, MAX_TICKS - 80);
+      needsRedraw = true;
+    }
+
     function getNodeAt(sx: number, sy: number): Node | null {
-      const [wx, wy] = toWorld(sx, sy);
+      const wx = (sx - HW) / zoom + camX;
+      const wy = (sy - HH) / zoom + camY;
       const hitR = 15 / zoom;
-      for (const nd of nodes) {
-        const dx = nd.x - wx;
-        const dy = nd.y - wy;
-        if (dx * dx + dy * dy < hitR * hitR) return nd;
+      const hitSq = hitR * hitR;
+      for (let i = 0; i < N; i++) {
+        const dx = nodes[i].x - wx;
+        const dy = nodes[i].y - wy;
+        if (dx * dx + dy * dy < hitSq) return nodes[i];
       }
       return null;
     }
 
     function onMouseDown(e: MouseEvent) {
       const r = canvas!.getBoundingClientRect();
-      const sx = e.clientX - r.left;
-      const sy = e.clientY - r.top;
-      const node = getNodeAt(sx, sy);
+      const node = getNodeAt(e.clientX - r.left, e.clientY - r.top);
       if (node) {
         dragging = node;
-        tick = Math.min(tick, MAX_TICKS - 100); // Reheat a bit
+        reheat();
       } else {
         panning = true;
         panStartX = e.clientX;
@@ -259,23 +272,21 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
     function onMouseMove(e: MouseEvent) {
       if (dragging) {
         const r = canvas!.getBoundingClientRect();
-        const [wx, wy] = toWorld(e.clientX - r.left, e.clientY - r.top);
-        dragging.x = wx;
-        dragging.y = wy;
+        const sx = e.clientX - r.left;
+        const sy = e.clientY - r.top;
+        dragging.x = (sx - HW) / zoom + camX;
+        dragging.y = (sy - HH) / zoom + camY;
         dragging.vx = 0;
         dragging.vy = 0;
+        needsRedraw = true;
       } else if (panning) {
-        const dx = (e.clientX - panStartX) / zoom;
-        const dy = (e.clientY - panStartY) / zoom;
-        camX = camStartX - dx;
-        camY = camStartY - dy;
+        camX = camStartX - (e.clientX - panStartX) / zoom;
+        camY = camStartY - (e.clientY - panStartY) / zoom;
+        needsRedraw = true;
       }
     }
 
-    function onMouseUp() {
-      dragging = null;
-      panning = false;
-    }
+    function onMouseUp() { dragging = null; panning = false; }
 
     function onClick(e: MouseEvent) {
       if (panning) return;
@@ -292,13 +303,14 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
       const r = canvas!.getBoundingClientRect();
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
-      const [wx, wy] = toWorld(mx, my);
-      // Smooth small step: ~3% per tick, clamped to sane range
+      const wx = (mx - HW) / zoom + camX;
+      const wy = (my - HH) / zoom + camY;
       const raw = -e.deltaY * 0.001;
       const step = Math.max(-0.05, Math.min(raw, 0.05));
       zoom = Math.max(0.15, Math.min(zoom * (1 + step), 3));
-      camX = wx - (mx - canvas!.width / 2) / zoom;
-      camY = wy - (my - canvas!.height / 2) / zoom;
+      camX = wx - (mx - HW) / zoom;
+      camY = wy - (my - HH) / zoom;
+      needsRedraw = true;
     }
 
     canvas.addEventListener('mousedown', onMouseDown);
