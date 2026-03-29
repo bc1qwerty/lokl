@@ -1,6 +1,6 @@
 import { settings, updateSettings, settingsOpen } from '../lib/store';
 import { t } from '../i18n';
-import { currentLang, setLang } from '../i18n/index';
+import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 
 export function SettingsPanel() {
   const str = t.value.settings;
@@ -55,11 +55,12 @@ export function SettingsPanel() {
           <div class="settings-row">
             <label>{str.language}</label>
             <div class="settings-control lang-buttons">
-              {['en', 'ko', 'ja'].map((lang) => (
+              {supportedLangs.map((lang) => (
                 <button
                   key={lang}
                   class={`btn-secondary${currentLang.value === lang ? ' active' : ''}`}
                   onClick={() => setLang(lang)}
+                  title={langLabels[lang]}
                 >
                   {lang.toUpperCase()}
                 </button>
