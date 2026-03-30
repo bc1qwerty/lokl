@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { allFilePaths, backlinksIndex, wikilinksIndex, tagsIndex } from './store';
 import type { Frontmatter } from '../types';
 
@@ -165,5 +166,6 @@ marked.use({
 
 export function renderMarkdown(content: string): string {
   const { body } = parseFrontmatter(content);
-  return marked.parse(body) as string;
+  const html = marked.parse(body) as string;
+  return DOMPurify.sanitize(html);
 }
