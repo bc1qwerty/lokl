@@ -31,8 +31,15 @@ export default defineConfig({
   resolve: {
     alias: { '@': resolve(__dirname, 'src') },
   },
+  optimizeDeps: {
+    include: ['pouchdb-browser'],
+  },
   build: {
     target: 'es2022',
+    commonjsOptions: {
+      include: [/pouchdb/, /node_modules/],
+      transformMixedEsModules: true,
+    },
     outDir: 'dist',
     rollupOptions: {
       output: {
