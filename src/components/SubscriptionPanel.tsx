@@ -21,7 +21,7 @@ interface Subscription {
 export function SubscriptionPanel() {
   const sub = useSignal<Subscription | null>(null);
   const loading = useSignal(false);
-  const invoice = useSignal<{ paymentRequest: string; paymentHash: string } | null>(null);
+  const invoice = useSignal<{ paymentRequest: string; paymentHash: string; qr?: string } | null>(null);
   const checking = useSignal(false);
   const error = useSignal('');
   const pollTimer = useSignal<ReturnType<typeof setInterval> | null>(null);
@@ -110,6 +110,11 @@ export function SubscriptionPanel() {
     return (
       <div style="margin-top:8px">
         <p style="font-size:12px; color:var(--text-muted); margin:0 0 6px">Pay with Lightning:</p>
+        {invoice.value.qr && window.innerWidth >= 768 && (
+          <div style="text-align:center; margin-bottom:8px">
+            <img src={invoice.value.qr} alt="Lightning QR" width="200" height="200" style="border-radius:8px" />
+          </div>
+        )}
         <input
           type="text"
           value={invoice.value.paymentRequest}
