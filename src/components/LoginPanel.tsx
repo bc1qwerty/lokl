@@ -2,7 +2,7 @@ import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { authState } from '../lib/store';
 import { loadSDK, openLogin, getUser, onAuthChange, type TxidUser } from '../lib/auth';
-import { startSync, stopSync } from '../lib/sync';
+// sync is gated by subscription, not auto-started on login
 
 export function LoginPanel() {
   const ready = useSignal(false);
@@ -15,17 +15,14 @@ export function LoginPanel() {
       const user = getUser();
       if (user?.authenticated) {
         authState.value = { status: 'authenticated', pubkey: user.pubkey };
-        startSync();
       }
 
       // Listen for auth changes
       onAuthChange((user: TxidUser | null) => {
         if (user?.authenticated) {
           authState.value = { status: 'authenticated', pubkey: user.pubkey };
-          startSync();
-        } else {
+          } else {
           authState.value = { status: 'anonymous' };
-          stopSync();
         }
       });
     });

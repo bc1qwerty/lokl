@@ -1,6 +1,7 @@
 import { settings, updateSettings, settingsOpen, authState, syncState } from '../lib/store';
 import { getUser, openLogin } from '../lib/auth';
 import { startSync, stopSync } from '../lib/sync';
+import { SubscriptionPanel } from './SubscriptionPanel';
 import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 
@@ -89,13 +90,14 @@ export function SettingsPanel() {
             </div>
           </div>
 
-          <div class="settings-row">
+          <div class="settings-row" style="flex-direction:column; align-items:stretch">
             <label>Sync</label>
-            <div class="settings-control" style="flex-direction:column; align-items:flex-end; gap:4px">
-              {authState.value.status === 'authenticated' ? (
-                <>
+            {authState.value.status === 'authenticated' ? (
+              <>
+                <SubscriptionPanel />
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px">
                   <span style={{
-                    fontSize: '12px',
+                    fontSize: '11px',
                     color: syncState.value.status === 'synced' ? '#22c55e' :
                            syncState.value.status === 'syncing' ? '#f59e0b' :
                            syncState.value.status === 'error' ? '#ef4444' : 'var(--text-muted)'
@@ -103,18 +105,18 @@ export function SettingsPanel() {
                     {syncState.value.status === 'synced' ? 'Synced' :
                      syncState.value.status === 'syncing' ? 'Syncing...' :
                      syncState.value.status === 'error' ? (syncState.value.error || 'Error') :
-                     'Offline'}
+                     'Not syncing'}
                   </span>
                   {syncState.value.lastSynced && (
                     <span style="font-size:11px; color:var(--text-muted)">
-                      Last: {syncState.value.lastSynced.toLocaleTimeString()}
+                      {syncState.value.lastSynced.toLocaleTimeString()}
                     </span>
                   )}
-                </>
-              ) : (
-                <span style="font-size:12px; color:var(--text-muted)">Login to enable sync</span>
-              )}
-            </div>
+                </div>
+              </>
+            ) : (
+              <span style="font-size:12px; color:var(--text-muted)">Login to enable sync</span>
+            )}
           </div>
         </div>
       </div>
