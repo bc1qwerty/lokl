@@ -4,14 +4,12 @@ import {
   vault, fileTree, currentFilePath, currentFileContent, savedContent,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, isReadOnly, addTab, settings, authState,
+  isLoading, isReadOnly, addTab, settings,
 } from './lib/store';
 import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
-import { getStoredAuth } from './lib/auth';
-import { startSync } from './lib/sync';
 import { LoginPanel } from './components/LoginPanel';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { Toolbar } from './components/Toolbar';
@@ -41,12 +39,7 @@ export function App() {
   useEffect(() => {
     initDB();
     loadNotes();
-    // Restore auth from localStorage
-    const stored = getStoredAuth();
-    if (stored) {
-      authState.value = { status: 'authenticated', jwt: stored.jwt, pubkey: stored.pubkey };
-      startSync();
-    }
+    // Auth is handled by LoginPanel via txid-auth.js SDK
   }, []);
 
   async function loadNotes() {
