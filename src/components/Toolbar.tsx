@@ -10,6 +10,7 @@ import {
   graphOpen,
   settingsOpen,
 } from '../lib/store';
+import { SyncStatus } from './SyncStatus';
 import type { ViewMode } from '../types';
 
 interface Props {
@@ -84,6 +85,7 @@ export function Toolbar({ saveStatus, onDailyNote }: Props) {
           title={str.toggleBacklinks}
           onClick={() => { backlinksOpen.value = !backlinksOpen.value; }}
         >&#128279;</button>
+        <SyncStatus />
         <button class="toolbar-btn" title={str.settings} onClick={() => { settingsOpen.value = true; }}>&#9881;</button>
         <button
           class="toolbar-btn"

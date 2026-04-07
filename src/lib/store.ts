@@ -24,6 +24,14 @@ export const settingsOpen = signal(false);
 export const graphOpen = signal(false);
 export const contextMenu = signal<{ x: number; y: number; path: string; kind: string } | null>(null);
 
+// Auth state
+export type AuthStatus = 'anonymous' | 'polling' | 'authenticated';
+export const authState = signal<{ status: AuthStatus; pubkey?: string; jwt?: string }>({ status: 'anonymous' });
+
+// Sync state
+export type SyncStatus = 'offline' | 'syncing' | 'synced' | 'error';
+export const syncState = signal<{ status: SyncStatus; lastSynced?: Date; error?: string }>({ status: 'offline' });
+
 // Settings
 export interface Settings {
   fontSize: number;

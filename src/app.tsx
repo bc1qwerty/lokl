@@ -1,16 +1,18 @@
 import { useSignal, useSignalEffect } from '@preact/signals';
-import { useCallback, useEffect, useRef } from 'preact/hooks';
+import { useCallback, useEffect } from 'preact/hooks';
 import {
   vault, fileTree, currentFilePath, currentFileContent, savedContent,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, isReadOnly, addTab, openTabs, settings,
+  isLoading, isReadOnly, addTab, settings, authState,
 } from './lib/store';
-import { readTree, readFile, writeFile, createFile, deleteFile } from './lib/fs';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
-import type { VaultState, FileEntry } from './types';
 
+import { getStoredAuth } from './lib/auth';
+import { startSync } from './lib/sync';
+import { LoginPanel } from './components/LoginPanel';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
@@ -34,16 +36,42 @@ export function App() {
   const renameValue = useSignal('');
   const saveTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Initialize PouchDB on mount + restore auth
+  useEffect(() => {
+    initDB();
+    loadNotes();
+    // Restore auth from localStorage
+    const stored = getStoredAuth();
+    if (stored) {
+      authState.value = { status: 'authenticated', jwt: stored.jwt, pubkey: stored.pubkey };
+      startSync();
+    }
+  }, []);
+
+  async function loadNotes() {
+    isLoading.value = true;
+    try {
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
+      clearIndex();
+      for (const note of notes) {
+        indexFile(note._id, note.content);
+        updateLinksForFile(note._id, note.content);
+      }
+      vault.value = { mode: 'pouchdb', name: 'lokl' };
+    } finally {
+      isLoading.value = false;
+    }
+  }
 
   // Auto-save with debounce
   useSignalEffect(() => {
     const dirty = isDirty.value;
     const ro = isReadOnly.value;
-    const v = vault.value;
     const path = currentFilePath.value;
 
-    if (!dirty || ro || !v || !path) {
+    if (!dirty || ro || !path) {
       if (!dirty) saveStatus.value = 'clean';
       return;
     }
@@ -53,7 +81,7 @@ export function App() {
     saveTimerRef.value = setTimeout(async () => {
       try {
         saveStatus.value = 'saving';
-        await writeFile(v, path, currentFileContent.value);
+        await putNote(path, currentFileContent.value);
         savedContent.value = currentFileContent.value;
         updateLinksForFile(path, currentFileContent.value);
         indexFile(path, currentFileContent.value);
@@ -67,59 +95,28 @@ export function App() {
     }, 1000);
   });
 
-  // External change detection (poll every 3s)
+  // PouchDB change feed (replaces 3s polling)
   useEffect(() => {
-    pollRef.current = setInterval(async () => {
-      const v = vault.value;
-      const path = currentFilePath.value;
-      if (!v || !path || v.mode !== 'native' || isDirty.value) return;
-      try {
-        const content = await readFile(v, path);
-        if (content !== savedContent.value) {
-          savedContent.value = content;
-          currentFileContent.value = content;
-        }
-      } catch { /* file may have been deleted */ }
-    }, 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
-
-  // Open vault
-  const handleOpenVault = useCallback(async (v: VaultState) => {
-    isLoading.value = true;
-    vault.value = v;
-    try {
-      const tree = await readTree(v);
-      fileTree.value = tree;
-      clearIndex();
-      await indexAllFiles(v, tree);
-    } catch (e) {
-      console.error('Failed to read vault:', e);
-    } finally {
-      isLoading.value = false;
-    }
-  }, []);
-
-  async function indexAllFiles(v: VaultState, entries: FileEntry[]) {
-    for (const entry of entries) {
-      if (entry.kind === 'file') {
-        try {
-          const content = await readFile(v, entry.path);
-          indexFile(entry.path, content);
-          updateLinksForFile(entry.path, content);
-        } catch { /* skip */ }
+    const watcher = watchChanges((doc) => {
+      if (doc._id === currentFilePath.value && !isDirty.value) {
+        savedContent.value = doc.content;
+        currentFileContent.value = doc.content;
       }
-      if (entry.children) await indexAllFiles(v, entry.children);
-    }
-  }
+      // Rebuild file tree on any change
+      listNotes().then(notes => {
+        fileTree.value = buildFileTree(notes);
+      });
+    });
+    return () => watcher.cancel();
+  }, []);
 
   // Open file (with tab)
   const handleFileClick = useCallback(async (path: string) => {
-    if (!vault.value) return;
     try {
-      const content = await readFile(vault.value, path);
-      savedContent.value = content;
-      currentFileContent.value = content;
+      const note = await getNote(path);
+      if (!note) return;
+      savedContent.value = note.content;
+      currentFileContent.value = note.content;
       currentFilePath.value = path;
       addTab(path);
       saveStatus.value = 'clean';
@@ -147,12 +144,12 @@ export function App() {
 
   const handleCreateFile = useCallback(async () => {
     const name = newFileName.value.trim();
-    if (!name || !vault.value) return;
+    if (!name) return;
     const path = name.endsWith('.md') ? name : `${name}.md`;
     try {
-      await createFile(vault.value, path);
-      const tree = await readTree(vault.value);
-      fileTree.value = tree;
+      await putNote(path, '');
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
       newFileOpen.value = false;
       await handleFileClick(path);
     } catch (e) {
@@ -162,18 +159,17 @@ export function App() {
 
   // Daily note
   const handleDailyNote = useCallback(async () => {
-    if (!vault.value || isReadOnly.value) return;
     const today = new Date().toISOString().slice(0, 10);
     const path = `${today}.md`;
-    try {
-      await readFile(vault.value, path);
+    const existing = await getNote(path);
+    if (existing) {
       await handleFileClick(path);
-    } catch {
-      await createFile(vault.value, path);
-      await writeFile(vault.value, path, `# ${today}\n\n`);
-      const tree = await readTree(vault.value);
-      fileTree.value = tree;
-      indexFile(path, `# ${today}\n\n`);
+    } else {
+      const content = `# ${today}\n\n`;
+      await putNote(path, content);
+      indexFile(path, content);
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
       await handleFileClick(path);
     }
   }, [handleFileClick]);
@@ -188,19 +184,19 @@ export function App() {
   const handleDoRename = useCallback(async () => {
     const oldPath = renameTarget.value;
     let newName = renameValue.value.trim();
-    if (!newName || !vault.value) return;
+    if (!newName) return;
     if (!newName.endsWith('.md')) newName += '.md';
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + newName;
     try {
-      const content = await readFile(vault.value, oldPath);
-      await createFile(vault.value, newPath);
-      await writeFile(vault.value, newPath, content);
-      await deleteFile(vault.value, oldPath);
+      const note = await getNote(oldPath);
+      if (!note) return;
+      await putNote(newPath, note.content);
+      await deleteNote(oldPath);
       removeFromIndex(oldPath);
-      indexFile(newPath, content);
-      const tree = await readTree(vault.value);
-      fileTree.value = tree;
+      indexFile(newPath, note.content);
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
       renameOpen.value = false;
       if (currentFilePath.value === oldPath) await handleFileClick(newPath);
     } catch (e) {
@@ -209,31 +205,30 @@ export function App() {
   }, [handleFileClick]);
 
   const handleDelete = useCallback(async (path: string) => {
-    if (!vault.value || !confirm(`Delete "${path.split('/').pop()}"?`)) return;
+    if (!confirm(`Delete "${path.split('/').pop()}"?`)) return;
     try {
-      await deleteFile(vault.value, path);
+      await deleteNote(path);
       removeFromIndex(path);
       const { closeTab } = await import('./lib/store');
       closeTab(path);
-      const tree = await readTree(vault.value);
-      fileTree.value = tree;
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
     } catch (e) {
       console.error('Delete failed:', e);
     }
   }, []);
 
   const handleDuplicate = useCallback(async (path: string) => {
-    if (!vault.value) return;
     const name = path.split('/').pop()?.replace(/\.md$/, '') || 'untitled';
     const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/') + 1) : '';
     const newPath = `${dir}${name} copy.md`;
     try {
-      const content = await readFile(vault.value, path);
-      await createFile(vault.value, newPath);
-      await writeFile(vault.value, newPath, content);
-      indexFile(newPath, content);
-      const tree = await readTree(vault.value);
-      fileTree.value = tree;
+      const note = await getNote(path);
+      if (!note) return;
+      await putNote(newPath, note.content);
+      indexFile(newPath, note.content);
+      const notes = await listNotes();
+      fileTree.value = buildFileTree(notes);
       await handleFileClick(newPath);
     } catch (e) {
       console.error('Duplicate failed:', e);
@@ -258,8 +253,8 @@ export function App() {
       if (mod && e.key === 'n') { e.preventDefault(); handleNewFile(); }
       if (mod && e.key === 's') {
         e.preventDefault();
-        if (vault.value && currentFilePath.value && isDirty.value && !isReadOnly.value) {
-          writeFile(vault.value, currentFilePath.value, currentFileContent.value).then(() => {
+        if (currentFilePath.value && isDirty.value && !isReadOnly.value) {
+          putNote(currentFilePath.value, currentFileContent.value).then(() => {
             savedContent.value = currentFileContent.value;
             saveStatus.value = 'saved';
           });
@@ -292,8 +287,9 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNewFile]);
 
+  // Show welcome screen until PouchDB is initialized (vault set by loadNotes)
   if (!vault.value) {
-    return <WelcomeScreen onOpen={handleOpenVault} />;
+    return <WelcomeScreen onLoadComplete={loadNotes} />;
   }
 
   const mode = viewMode.value;
@@ -306,7 +302,9 @@ export function App() {
     >
       <Toolbar saveStatus={saveStatus.value} onDailyNote={handleDailyNote} />
 
-      <Sidebar onFileClick={handleFileClick} onNewFile={handleNewFile} />
+      <Sidebar onFileClick={handleFileClick} onNewFile={handleNewFile}>
+        <LoginPanel />
+      </Sidebar>
 
       <div class="main-content">
         <div style="display:flex; flex-direction:column; flex:1; min-width:0; overflow:hidden">

@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { t } from '../i18n';
 import { vault, fileTree, searchOpen } from '../lib/store';
 import { FileTree } from './FileTree';
@@ -5,9 +6,10 @@ import { FileTree } from './FileTree';
 interface Props {
   onFileClick: (path: string) => void;
   onNewFile: () => void;
+  children?: ComponentChildren;
 }
 
-export function Sidebar({ onFileClick, onNewFile }: Props) {
+export function Sidebar({ onFileClick, onNewFile, children }: Props) {
   const str = t.value.sidebar;
   const v = vault.value;
 
@@ -43,6 +45,7 @@ export function Sidebar({ onFileClick, onNewFile }: Props) {
           </div>
         )}
       </div>
+      {children && <div class="sidebar-footer">{children}</div>}
     </aside>
   );
 }

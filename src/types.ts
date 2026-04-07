@@ -22,13 +22,14 @@ export interface Frontmatter {
   [key: string]: unknown;
 }
 
-export type VaultMode = 'native' | 'fallback';
+export type VaultMode = 'native' | 'fallback' | 'pouchdb';
 
 export interface VaultState {
   mode: VaultMode;
   name: string;
   handle?: FileSystemDirectoryHandle;
   files?: Map<string, File>;
+  dbName?: string;
 }
 
 // File System Access API type augmentations
