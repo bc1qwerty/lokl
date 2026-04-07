@@ -6,7 +6,7 @@ import {
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
   isLoading, isReadOnly, addTab, settings,
 } from './lib/store';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
@@ -35,11 +35,19 @@ export function App() {
   const saveTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
 
-  // Initialize PouchDB on mount + restore auth
+  // Initialize PouchDB on mount
   useEffect(() => {
     initDB();
-    loadNotes();
-    // Auth is handled by LoginPanel via txid-auth.js SDK
+    // Check if DB has any notes — skip WelcomeScreen if so
+    getDB().info().then((info) => {
+      if (info.doc_count > 0) {
+        loadNotes();
+      } else {
+        // Empty DB: show WelcomeScreen (vault stays null)
+        vault.value = null;
+        isLoading.value = false;
+      }
+    });
   }, []);
 
   async function loadNotes() {

@@ -1,4 +1,6 @@
-import { settings, updateSettings, settingsOpen } from '../lib/store';
+import { settings, updateSettings, settingsOpen, authState, syncState } from '../lib/store';
+import { getUser, openLogin } from '../lib/auth';
+import { startSync, stopSync } from '../lib/sync';
 import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 
@@ -64,6 +66,54 @@ export function SettingsPanel() {
                   <option key={lang} value={lang}>{langLabels[lang]}</option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div class="settings-divider" style="border-top:1px solid var(--border); margin:12px 0" />
+
+          <div class="settings-row">
+            <label>Account</label>
+            <div class="settings-control" style="flex-direction:column; align-items:flex-end; gap:4px">
+              {authState.value.status === 'authenticated' ? (
+                <>
+                  <span style="font-size:12px; color:var(--text-primary)">
+                    {authState.value.pubkey?.slice(0, 8)}...{authState.value.pubkey?.slice(-4)}
+                  </span>
+                  <span style="font-size:11px; color:var(--text-muted)">Logged in</span>
+                </>
+              ) : (
+                <button class="btn-primary" style="font-size:12px; padding:4px 12px" onClick={() => { settingsOpen.value = false; openLogin(); }}>
+                  Login with Lightning
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <label>Sync</label>
+            <div class="settings-control" style="flex-direction:column; align-items:flex-end; gap:4px">
+              {authState.value.status === 'authenticated' ? (
+                <>
+                  <span style={{
+                    fontSize: '12px',
+                    color: syncState.value.status === 'synced' ? '#22c55e' :
+                           syncState.value.status === 'syncing' ? '#f59e0b' :
+                           syncState.value.status === 'error' ? '#ef4444' : 'var(--text-muted)'
+                  }}>
+                    {syncState.value.status === 'synced' ? 'Synced' :
+                     syncState.value.status === 'syncing' ? 'Syncing...' :
+                     syncState.value.status === 'error' ? (syncState.value.error || 'Error') :
+                     'Offline'}
+                  </span>
+                  {syncState.value.lastSynced && (
+                    <span style="font-size:11px; color:var(--text-muted)">
+                      Last: {syncState.value.lastSynced.toLocaleTimeString()}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span style="font-size:12px; color:var(--text-muted)">Login to enable sync</span>
+              )}
             </div>
           </div>
         </div>
