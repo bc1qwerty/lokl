@@ -11,11 +11,13 @@ export function LoginPanel() {
     loadSDK().then(() => {
       ready.value = true;
 
-      // Check if already logged in
-      const user = getUser();
-      if (user?.authenticated) {
-        authState.value = { status: 'authenticated', pubkey: user.pubkey };
-      }
+      // SDK init is async, wait briefly for session check
+      setTimeout(() => {
+        const user = getUser();
+        if (user?.authenticated) {
+          authState.value = { status: 'authenticated', pubkey: user.pubkey };
+        }
+      }, 500);
 
       // Listen for auth changes
       onAuthChange((user: TxidUser | null) => {

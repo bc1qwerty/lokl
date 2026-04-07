@@ -85,6 +85,7 @@ export function Toolbar({ saveStatus, onDailyNote }: Props) {
           title={str.toggleBacklinks}
           onClick={() => { backlinksOpen.value = !backlinksOpen.value; }}
         >&#128279;</button>
+        <div id="txid-auth-mount" style="display:inline-flex" />
         <SyncStatus />
         <button class="toolbar-btn" title={str.settings} onClick={() => { settingsOpen.value = true; }}>&#9881;</button>
         <button
