@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { resolve } from 'path';
 
 export default defineConfig({
-  base: '/lokl/',
+  base: '/',
   plugins: [
     preact(),
     VitePWA({
