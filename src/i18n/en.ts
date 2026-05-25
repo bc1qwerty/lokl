@@ -103,6 +103,7 @@ export const en = {
       emptyTrash: 'Empty trash',
       trashEmpty: 'Trash is already empty.',
       emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+      purgedCount: 'Purged {n} notes.',
     },
   },
   dailyNote: {

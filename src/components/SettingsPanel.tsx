@@ -171,9 +171,11 @@ export function SettingsPanel() {
               if (!confirm(str.data.emptyTrashConfirm.replace('{n}', String(trashed.length)))) return;
               let purged = 0;
               for (const n of trashed) {
-                try { await purgeNote(n._id); purged++; } catch {}
+                try { await purgeNote(n._id); purged++; } catch (err) {
+                  console.warn(`purgeNote failed for ${n._id}:`, err);
+                }
               }
-              alert(`Purged ${purged}.`);
+              alert(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
             }}>{str.data.emptyTrash}</button>
           </div>
         </div>
