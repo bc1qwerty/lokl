@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -188,5 +188,33 @@ describe('trash + sweeper', () => {
     await getDB().put({ ...side, conflictOf: 'keep.md' });
     const visible = await listNotes();
     expect(visible.map(n => n._id)).toEqual(['keep.md']);
+  });
+});
+
+describe('atomicRename', () => {
+  it('moves a note from old to new path', async () => {
+    await putNote('old.md', 'content here');
+    await atomicRename('old.md', 'new.md');
+    expect(await getNote('old.md')).toBeNull();
+    expect((await getNote('new.md'))?.content).toBe('content here');
+  });
+
+  it('rejects when destination already exists', async () => {
+    await putNote('a.md', '1');
+    await putNote('b.md', '2');
+    await expect(atomicRename('a.md', 'b.md')).rejects.toThrow(/Destination exists/);
+    // Both remain
+    expect((await getNote('a.md'))?.content).toBe('1');
+    expect((await getNote('b.md'))?.content).toBe('2');
+  });
+
+  it('rejects when source not found', async () => {
+    await expect(atomicRename('nope.md', 'new.md')).rejects.toThrow(/Source not found/);
+  });
+
+  it('is a no-op when source equals destination', async () => {
+    await putNote('same.md', 'x');
+    await atomicRename('same.md', 'same.md');
+    expect((await getNote('same.md'))?.content).toBe('x');
   });
 });

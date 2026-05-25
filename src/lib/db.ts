@@ -255,6 +255,26 @@ export async function resolveConflict(id: string): Promise<string[]> {
   return siblings;
 }
 
+export async function atomicRename(oldPath: string, newPath: string): Promise<void> {
+  if (oldPath === newPath) return;
+  // Reserve check: destination must not exist as a visible note.
+  const destExisting = await getNote(newPath);
+  if (destExisting) throw new Error('Destination exists');
+  const source = await getNote(oldPath);
+  if (!source) throw new Error('Source not found');
+
+  // Phase 1: copy to new path.
+  await putNote(newPath, source.content);
+
+  // Phase 2: delete (trash) old path. On failure, roll back by purging the new copy.
+  try {
+    await deleteNote(oldPath);
+  } catch (e) {
+    try { await purgeNote(newPath); } catch { /* best-effort rollback */ }
+    throw e;
+  }
+}
+
 // Watch for changes (used to replace 3s filesystem polling)
 export function watchChanges(cb: (doc: NoteDoc) => void): { cancel: () => void } {
   const changes = getDB().changes({

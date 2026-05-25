@@ -6,7 +6,7 @@ import {
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
   isLoading, isReadOnly, addTab, settings,
 } from './lib/store';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
@@ -198,18 +198,17 @@ export function App() {
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + newName;
     try {
-      const note = await getNote(oldPath);
-      if (!note) return;
-      await putNote(newPath, note.content);
-      await deleteNote(oldPath);
+      await atomicRename(oldPath, newPath);
       removeFromIndex(oldPath);
-      indexFile(newPath, note.content);
+      const renamed = await getNote(newPath);
+      if (renamed) indexFile(newPath, renamed.content);
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
       renameOpen.value = false;
       if (currentFilePath.value === oldPath) await handleFileClick(newPath);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Rename failed:', e);
+      toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
     }
   }, [handleFileClick]);
 
