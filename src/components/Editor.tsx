@@ -6,7 +6,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { currentFileContent, savedContent, isReadOnly, currentFilePath, settings } from '../lib/store';
+import { currentFileContent, savedContent, currentFilePath, settings } from '../lib/store';
 import { theme } from '../lib/theme';
 
 const lightTheme = EditorView.theme({}, { dark: false });
@@ -61,7 +61,7 @@ function getExtensions(): Extension[] {
     EditorView.lineWrapping,
     wikilinkDeco,
     themeCompartment.of(theme.value === 'dark' ? oneDark : lightTheme),
-    readOnlyCompartment.of(EditorState.readOnly.of(isReadOnly.value)),
+    readOnlyCompartment.of(EditorState.readOnly.of(false)),
     fontSizeCompartment.of(fontSizeTheme(s.fontSize)),
     lineNumbersCompartment.of(s.editorLineNumbers ? lineNumbers() : []),
     EditorView.updateListener.of((update) => {
@@ -104,14 +104,6 @@ export function Editor() {
     const t = theme.value;
     if (!view) return;
     view.dispatch({ effects: themeCompartment.reconfigure(t === 'dark' ? oneDark : lightTheme) });
-  });
-
-  // Sync read-only
-  useSignalEffect(() => {
-    const view = viewRef.current;
-    const ro = isReadOnly.value;
-    if (!view) return;
-    view.dispatch({ effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(ro)) });
   });
 
   // Sync font size

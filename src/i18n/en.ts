@@ -95,6 +95,16 @@ export const en = {
     lineNumbers: 'Line numbers',
     language: 'Language',
     close: 'Close',
+    data: {
+      title: 'Data',
+      exportJson: 'Export JSON',
+      exportZip: 'Export ZIP',
+      importJson: 'Import JSON',
+      emptyTrash: 'Empty trash',
+      trashEmpty: 'Trash is already empty.',
+      emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+      purgedCount: 'Purged {n} notes.',
+    },
   },
   dailyNote: {
     created: 'Daily note created',
@@ -106,6 +116,17 @@ export const en = {
     delete: 'Delete',
     rename: 'Rename',
     create: 'Create',
+  },
+  conflicts: {
+    title: 'Conflicts',
+    openOriginal: 'open original',
+    discard: 'discard',
+  },
+  trash: {
+    title: 'Trash',
+    restore: 'restore',
+    deleteForever: 'delete forever',
+    empty: 'Trash is empty',
   },
 } as const;
 

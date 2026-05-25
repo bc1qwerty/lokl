@@ -4,13 +4,15 @@ import {
   vault, fileTree, currentFilePath, currentFileContent, savedContent,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, isReadOnly, addTab, settings,
+  isLoading, addTab, settings,
 } from './lib/store';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
+import { startQuotaMonitor } from './lib/quota';
 import { LoginPanel } from './components/LoginPanel';
+import { QuotaBanner } from './components/QuotaBanner';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
@@ -24,6 +26,8 @@ import { QuickOpen } from './components/QuickOpen';
 import { ContextMenu } from './components/ContextMenu';
 import { GraphView } from './components/GraphView';
 import { SettingsPanel } from './components/SettingsPanel';
+import { ToastContainer } from './components/Toast';
+import { toast } from './lib/toast';
 
 export function App() {
   const saveStatus = useSignal<'clean' | 'dirty' | 'saving' | 'saved'>('clean');
@@ -38,6 +42,8 @@ export function App() {
   // Initialize PouchDB on mount
   useEffect(() => {
     initDB();
+    sweepTrash().catch(e => console.error('sweepTrash failed:', e));
+    const stop = startQuotaMonitor();
     // Check if DB has any notes — skip WelcomeScreen if so
     getDB().info().then((info) => {
       if (info.doc_count > 0) {
@@ -48,6 +54,7 @@ export function App() {
         isLoading.value = false;
       }
     });
+    return () => stop();
   }, []);
 
   async function loadNotes() {
@@ -69,10 +76,9 @@ export function App() {
   // Auto-save with debounce
   useSignalEffect(() => {
     const dirty = isDirty.value;
-    const ro = isReadOnly.value;
     const path = currentFilePath.value;
 
-    if (!dirty || ro || !path) {
+    if (!dirty || !path) {
       if (!dirty) saveStatus.value = 'clean';
       return;
     }
@@ -89,8 +95,13 @@ export function App() {
         saveStatus.value = 'saved';
         if (statusTimerRef.value) clearTimeout(statusTimerRef.value);
         statusTimerRef.value = setTimeout(() => { saveStatus.value = 'clean'; }, 2000);
-      } catch (e) {
+      } catch (e: any) {
         console.error('Save failed:', e);
+        if (e?.name === 'QuotaExceededError' || e?.status === 507) {
+          toast.error('Storage full — empty trash to free space');
+        } else {
+          toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
+        }
         saveStatus.value = 'dirty';
       }
     }, 1000);
@@ -138,7 +149,6 @@ export function App() {
 
   // New file
   const handleNewFile = useCallback(() => {
-    if (isReadOnly.value) return;
     newFileName.value = '';
     newFileOpen.value = true;
   }, []);
@@ -190,18 +200,17 @@ export function App() {
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + newName;
     try {
-      const note = await getNote(oldPath);
-      if (!note) return;
-      await putNote(newPath, note.content);
-      await deleteNote(oldPath);
+      await atomicRename(oldPath, newPath);
       removeFromIndex(oldPath);
-      indexFile(newPath, note.content);
+      const renamed = await getNote(newPath);
+      if (renamed) indexFile(newPath, renamed.content);
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
       renameOpen.value = false;
       if (currentFilePath.value === oldPath) await handleFileClick(newPath);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Rename failed:', e);
+      toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
     }
   }, [handleFileClick]);
 
@@ -254,11 +263,20 @@ export function App() {
       if (mod && e.key === 'n') { e.preventDefault(); handleNewFile(); }
       if (mod && e.key === 's') {
         e.preventDefault();
-        if (currentFilePath.value && isDirty.value && !isReadOnly.value) {
-          putNote(currentFilePath.value, currentFileContent.value).then(() => {
-            savedContent.value = currentFileContent.value;
-            saveStatus.value = 'saved';
-          });
+        if (currentFilePath.value && isDirty.value) {
+          putNote(currentFilePath.value, currentFileContent.value)
+            .then(() => {
+              savedContent.value = currentFileContent.value;
+              saveStatus.value = 'saved';
+            })
+            .catch((err: any) => {
+              console.error('Save failed (Cmd+S):', err);
+              if (err?.name === 'QuotaExceededError' || err?.status === 507) {
+                toast.error('Storage full — empty trash to free space');
+              } else {
+                toast.error(`Save failed: ${err?.message ?? 'unknown error'}`);
+              }
+            });
         }
       }
       if (mod && e.key === '\\') { e.preventDefault(); sidebarOpen.value = !sidebarOpen.value; }
@@ -288,6 +306,19 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNewFile]);
 
+  // Guard tab/window close while content is unsaved
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (isDirty.value || saveStatus.value === 'saving') {
+        e.preventDefault();
+        // Required by Chrome (deprecated assignment but still needed):
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
   // Show welcome screen until PouchDB is initialized (vault set by loadNotes)
   if (!vault.value) {
     return <WelcomeScreen onLoadComplete={loadNotes} />;
@@ -301,6 +332,7 @@ export function App() {
       data-sidebar={sidebarOpen.value ? 'open' : 'closed'}
       data-backlinks={backlinksOpen.value ? 'open' : 'closed'}
     >
+      <QuotaBanner />
       <Toolbar saveStatus={saveStatus.value} onDailyNote={handleDailyNote} />
 
       <Sidebar onFileClick={handleFileClick} onNewFile={handleNewFile}>
@@ -379,6 +411,8 @@ export function App() {
           </div>
         </div>
       )}
+
+      <ToastContainer />
     </div>
   );
 }

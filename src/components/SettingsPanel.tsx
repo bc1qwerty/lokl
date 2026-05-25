@@ -4,6 +4,20 @@ import { startSync, stopSync } from '../lib/sync';
 import { SubscriptionPanel } from './SubscriptionPanel';
 import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
+import { exportJSON, exportZIP, importJSON } from '../lib/backup';
+import { listTrash, purgeNote } from '../lib/db';
+import { toast } from '../lib/toast';
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 export function SettingsPanel() {
   const str = t.value.settings;
@@ -117,6 +131,53 @@ export function SettingsPanel() {
             ) : (
               <span style="font-size:12px; color:var(--text-muted)">Login to enable sync</span>
             )}
+          </div>
+
+          <div class="settings-divider" style="border-top:1px solid var(--border); margin:12px 0" />
+
+          <div class="settings-row" style="flex-direction:column; align-items:stretch; gap:6px">
+            <label style="font-size:13px; color:var(--text-secondary); margin-bottom:4px">{str.data.title}</label>
+
+            <button class="btn-secondary" onClick={async () => {
+              const blob = await exportJSON();
+              download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.json`);
+            }}>{str.data.exportJson}</button>
+
+            <button class="btn-secondary" onClick={async () => {
+              const blob = await exportZIP();
+              download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.zip`);
+            }}>{str.data.exportZip}</button>
+
+            <label class="settings-import-label">
+              {str.data.importJson}
+              <input type="file" accept=".json" onChange={async (e) => {
+                const f = (e.target as HTMLInputElement).files?.[0];
+                if (!f) return;
+                try {
+                  const { imported, conflicts } = await importJSON(f);
+                  toast.success(`Imported ${imported}. Conflicts kept: ${conflicts}.`);
+                } catch (err: any) {
+                  toast.error(`Import failed: ${err?.message ?? 'unknown error'}`);
+                }
+                (e.target as HTMLInputElement).value = '';
+              }} />
+            </label>
+
+            <button class="btn-secondary" onClick={async () => {
+              const trashed = await listTrash();
+              if (trashed.length === 0) {
+                toast.info(str.data.trashEmpty);
+                return;
+              }
+              if (!confirm(str.data.emptyTrashConfirm.replace('{n}', String(trashed.length)))) return;
+              let purged = 0;
+              for (const n of trashed) {
+                try { await purgeNote(n._id); purged++; } catch (err) {
+                  console.warn(`purgeNote failed for ${n._id}:`, err);
+                }
+              }
+              toast.success(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
+            }}>{str.data.emptyTrash}</button>
           </div>
         </div>
       </div>

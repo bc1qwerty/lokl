@@ -97,6 +97,16 @@ const ko: Locale = {
     lineNumbers: '줄 번호',
     language: '언어',
     close: '닫기',
+    data: {
+      title: 'Data',
+      exportJson: 'Export JSON',
+      exportZip: 'Export ZIP',
+      importJson: 'Import JSON',
+      emptyTrash: 'Empty trash',
+      trashEmpty: 'Trash is already empty.',
+      emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+      purgedCount: 'Purged {n} notes.',
+    },
   },
   dailyNote: {
     created: '오늘의 노트가 생성되었습니다',
@@ -108,6 +118,17 @@ const ko: Locale = {
     delete: '삭제',
     rename: '이름 변경',
     create: '만들기',
+  },
+  conflicts: {
+    title: 'Conflicts',
+    openOriginal: 'open original',
+    discard: 'discard',
+  },
+  trash: {
+    title: 'Trash',
+    restore: 'restore',
+    deleteForever: 'delete forever',
+    empty: 'Trash is empty',
   },
 };
 

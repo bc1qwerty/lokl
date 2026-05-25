@@ -10,6 +10,12 @@ export interface NoteDoc {
   links: string[];     // outgoing wiki-links
   createdAt: string;   // ISO 8601
   updatedAt: string;   // ISO 8601
+  // Trash (B1 will use; declared now so types compile)
+  trashed?: boolean;
+  trashedAt?: string;
+  // Conflict (A2/A3 uses)
+  conflictOf?: string;
+  // Legacy soft-delete — migrated to `trashed` by B1's sweeper
   deleted?: boolean;
 }
 
@@ -25,6 +31,10 @@ export function initDB(name = 'lokl'): PouchDB.Database<NoteDoc> {
 export function getDB(): PouchDB.Database<NoteDoc> {
   if (!db) return initDB();
   return db;
+}
+
+export function setDB(instance: PouchDB.Database<NoteDoc>): void {
+  db = instance;
 }
 
 // Extract title from markdown content
@@ -70,7 +80,7 @@ function extractLinks(content: string): string[] {
 export async function getNote(id: string): Promise<NoteDoc | null> {
   try {
     const doc = await getDB().get(id);
-    if (doc.deleted) return null;
+    if (doc.deleted || doc.trashed) return null;
     return doc;
   } catch (e: any) {
     if (e.status === 404) return null;
@@ -78,36 +88,39 @@ export async function getNote(id: string): Promise<NoteDoc | null> {
   }
 }
 
+const PUT_MAX_RETRY = 25;
+
 export async function putNote(id: string, content: string): Promise<void> {
   const now = new Date().toISOString();
-  const title = extractTitle(content, id);
-  const tags = extractTags(content);
-  const links = extractLinks(content);
-
-  try {
-    const existing = await getDB().get(id);
-    await getDB().put({
+  for (let attempt = 0; attempt < PUT_MAX_RETRY; attempt++) {
+    // Read RAW (not via getNote) so legacy deleted: true docs are still seen — we
+    // must attach the correct _rev to overwrite them.
+    let existing: NoteDoc | null = null;
+    try {
+      existing = await getDB().get(id);
+    } catch (e: any) {
+      if (e.status !== 404) throw e;
+    }
+    const doc: NoteDoc = {
       _id: id,
-      _rev: existing._rev,
+      _rev: existing?._rev,
       content,
-      title,
-      tags,
-      links,
-      createdAt: existing.createdAt || now,
+      title: extractTitle(content, id),
+      tags: extractTags(content),
+      links: extractLinks(content),
+      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    });
-  } catch (e: any) {
-    if (e.status === 404) {
-      await getDB().put({
-        _id: id,
-        content,
-        title,
-        tags,
-        links,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
+    };
+    try {
+      await getDB().put(doc);
+      return;
+    } catch (e: any) {
+      if (e.status === 409 && attempt < PUT_MAX_RETRY - 1) {
+        // Random jitter (0–9 ms) prevents all concurrent callers from
+        // re-reading _rev at exactly the same tick and colliding again.
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 10)));
+        continue;
+      }
       throw e;
     }
   }
@@ -116,10 +129,50 @@ export async function putNote(id: string, content: string): Promise<void> {
 export async function deleteNote(id: string): Promise<void> {
   try {
     const doc = await getDB().get(id);
-    await getDB().put({ ...doc, deleted: true, updatedAt: new Date().toISOString() });
+    await getDB().put({ ...doc, trashed: true, trashedAt: new Date().toISOString() });
   } catch (e: any) {
     if (e.status === 404) return;
     throw e;
+  }
+}
+
+export async function restoreNote(id: string): Promise<void> {
+  const doc = await getDB().get(id) as any;
+  const { trashed, trashedAt, ...rest } = doc;
+  void trashed; void trashedAt;
+  await getDB().put(rest);
+}
+
+export async function purgeNote(id: string): Promise<void> {
+  const doc = await getDB().get(id);
+  await getDB().remove(doc as NoteDoc & { _rev: string });
+}
+
+export async function listTrash(): Promise<NoteDoc[]> {
+  const result = await getDB().allDocs({ include_docs: true });
+  return result.rows
+    .map(r => r.doc as NoteDoc | undefined)
+    .filter((d): d is NoteDoc => !!d && !!d.trashed);
+}
+
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export async function sweepTrash(now: number = Date.now()): Promise<void> {
+  const cutoff = now - TRASH_TTL_MS;
+  const result = await getDB().allDocs({ include_docs: true });
+  for (const row of result.rows) {
+    const doc = row.doc as NoteDoc | undefined;
+    if (!doc) continue;
+    // 1. Legacy `deleted: true` → `trashed: true` (one-time migration on first sweep)
+    if (doc.deleted && !doc.trashed) {
+      const { deleted, ...rest } = doc as any;
+      void deleted;
+      await getDB().put({ ...rest, trashed: true, trashedAt: doc.updatedAt });
+      continue;
+    }
+    // 2. Old trash → physical remove
+    if (doc.trashed && doc.trashedAt && Date.parse(doc.trashedAt) < cutoff) {
+      await getDB().remove(doc as NoteDoc & { _rev: string });
+    }
   }
 }
 
@@ -127,7 +180,7 @@ export async function listNotes(): Promise<NoteDoc[]> {
   const result = await getDB().allDocs({ include_docs: true });
   return result.rows
     .map(r => r.doc!)
-    .filter(d => d && !d.deleted && d._id !== '_settings');
+    .filter(d => d && !d.trashed && !d.deleted && !d.conflictOf);
 }
 
 // Build FileEntry tree from flat note list (for compatibility with existing components)
@@ -170,6 +223,56 @@ export function buildFileTree(notes: NoteDoc[]): FileEntry[] {
   }
 
   return sortEntries(root);
+}
+
+export async function listConflicts(): Promise<NoteDoc[]> {
+  const result = await getDB().allDocs({ include_docs: true, conflicts: true });
+  return result.rows
+    .map(r => r.doc as (NoteDoc & { _conflicts?: string[] }) | undefined)
+    .filter((d): d is NoteDoc & { _conflicts: string[] } => !!d && Array.isArray((d as any)._conflicts) && !d.trashed);
+}
+
+export async function resolveConflict(id: string): Promise<string[]> {
+  // Returns the list of newly-created sibling ids ("(conflict-...)" notes).
+  const winning = await getDB().get(id, { conflicts: true } as any) as NoteDoc & { _conflicts?: string[] };
+  const conflicts = (winning as any)._conflicts as string[] | undefined;
+  if (!conflicts?.length) return [];
+  const siblings: string[] = [];
+  for (const rev of conflicts) {
+    const losing = await getDB().get(id, { rev }) as NoteDoc;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const base = id.replace(/\.md$/, '');
+    const revShort = rev.split('-')[1]?.slice(0, 6) ?? rev.slice(0, 6);
+    const siblingId = `${base} (conflict-${ts}-${revShort}).md`;
+    await putNote(siblingId, losing.content);
+    const sibling = await getNote(siblingId);
+    if (sibling) {
+      await getDB().put({ ...sibling, conflictOf: id });
+    }
+    await getDB().remove(id, rev);
+    siblings.push(siblingId);
+  }
+  return siblings;
+}
+
+export async function atomicRename(oldPath: string, newPath: string): Promise<void> {
+  if (oldPath === newPath) return;
+  // Reserve check: destination must not exist as a visible note.
+  const destExisting = await getNote(newPath);
+  if (destExisting) throw new Error('Destination exists');
+  const source = await getNote(oldPath);
+  if (!source) throw new Error('Source not found');
+
+  // Phase 1: copy to new path.
+  await putNote(newPath, source.content);
+
+  // Phase 2: delete (trash) old path. On failure, roll back by purging the new copy.
+  try {
+    await deleteNote(oldPath);
+  } catch (e) {
+    try { await purgeNote(newPath); } catch { /* best-effort rollback */ }
+    throw e;
+  }
 }
 
 // Watch for changes (used to replace 3s filesystem polling)

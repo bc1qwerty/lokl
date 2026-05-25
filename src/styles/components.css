@@ -414,6 +414,15 @@
   outline: none;
 }
 .settings-select:focus { border-color: var(--accent); }
+.settings-import-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.settings-import-label input[type="file"] { font-size: 12px; }
 
 /* Tags */
 .tags-section { border-top: 1px solid var(--border); }
@@ -443,6 +452,100 @@
 }
 .tag-files { border-top: 1px solid var(--border-light); }
 
+/* Conflict panel */
+.conflict-panel { border-top: 1px solid var(--border); }
+.conflict-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.conflict-count {
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+}
+.conflict-list { list-style: none; padding: 0; margin: 0; }
+.conflict-item {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px 6px;
+  border-bottom: 1px solid var(--border-light);
+  gap: 3px;
+}
+.conflict-item:last-child { border-bottom: none; }
+.conflict-open {
+  font-size: 12px;
+  color: var(--accent);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.conflict-open:hover { text-decoration: underline; }
+.conflict-actions { display: flex; gap: 6px; }
+.conflict-open-orig {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.conflict-open-orig:hover { color: var(--text-secondary); }
+.conflict-discard {
+  font-size: 11px;
+  color: var(--red);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.conflict-discard:hover { opacity: 0.75; }
+
+/* Trash panel */
+.trash-panel {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.trash-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+  width: 100%;
+  text-align: left;
+}
+.trash-toggle:hover { color: var(--text-secondary); }
+.trash-list { list-style: none; padding: 0; margin: 4px 0 0 0; }
+.trash-list li { display: flex; gap: 6px; align-items: center; padding: 2px 0; font-size: 12px; }
+.trash-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.trash-date { color: var(--text-muted); font-size: 11px; }
+.trash-restore, .trash-purge {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+}
+.trash-restore { color: var(--accent); }
+.trash-restore:hover { opacity: 0.75; }
+.trash-purge { color: var(--red); }
+.trash-purge:hover { opacity: 0.75; }
+
 /* Drop zone */
 .welcome-dropzone {
   border: 2px dashed var(--border);
@@ -453,4 +556,65 @@
 .welcome-dropzone.dragover {
   border-color: var(--accent);
   background: var(--accent-bg);
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--bg-elevated, var(--bg-raised));
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  max-width: 360px;
+}
+.toast-info    { border-left: 3px solid var(--accent); }
+.toast-success { border-left: 3px solid var(--green); }
+.toast-warning { border-left: 3px solid var(--yellow); }
+.toast-error   { border-left: 3px solid var(--red); }
+.toast-message { flex: 1; word-break: break-word; }
+.toast-action,
+.toast-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 0 4px;
+}
+.toast-action { color: var(--accent); }
+.toast-dismiss { font-size: 18px; line-height: 1; }
+
+/* Quota banner */
+.quota-banner {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 6px 12px;
+  font-size: 13px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.quota-warning {
+  background: var(--yellow-bg, rgba(210, 153, 34, 0.15));
+  color: var(--yellow, #d29922);
+}
+.quota-critical {
+  background: var(--red-bg, rgba(248, 81, 73, 0.15));
+  color: var(--red);
 }

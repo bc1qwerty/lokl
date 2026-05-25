@@ -23,9 +23,11 @@ const de: Locale = {
   graph: { title: 'Graphansicht', noData: 'Keine Verbindungen gefunden', close: 'Schließen' },
   tags: { title: 'Tags', none: 'Keine Tags', clearFilter: 'Filter löschen' },
   contextMenu: { rename: 'Umbenennen', delete: 'Löschen', duplicateFile: 'Duplizieren', copyPath: 'Pfad kopieren', newFileHere: 'Neue Datei hier' },
-  settings: { title: 'Einstellungen', fontSize: 'Schriftgröße', sortBy: 'Dateien sortieren', sortName: 'Name', sortModified: 'Geändert', lineNumbers: 'Zeilennummern', language: 'Sprache', close: 'Schließen' },
+  settings: { title: 'Einstellungen', fontSize: 'Schriftgröße', sortBy: 'Dateien sortieren', sortName: 'Name', sortModified: 'Geändert', lineNumbers: 'Zeilennummern', language: 'Sprache', close: 'Schließen', data: { title: 'Data', exportJson: 'Export JSON', exportZip: 'Export ZIP', importJson: 'Import JSON', emptyTrash: 'Empty trash', trashEmpty: 'Trash is already empty.', emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.', purgedCount: 'Purged {n} notes.' } },
   dailyNote: { created: 'Tagesnotiz erstellt' },
   common: { cancel: 'Abbrechen', confirm: 'Bestätigen', close: 'Schließen', delete: 'Löschen', rename: 'Umbenennen', create: 'Erstellen' },
+  conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
+  trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', empty: 'Trash is empty' },
 };
 
 export default de;

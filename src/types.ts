@@ -32,6 +32,9 @@ export interface VaultState {
   dbName?: string;
 }
 
+/** The app's active vault is always PouchDB after loadNotes() completes. */
+export type ActiveVault = { mode: 'pouchdb'; name: string };
+
 // File System Access API type augmentations
 declare global {
   interface FileSystemHandle {
