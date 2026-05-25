@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getDB, getNote, putNote, deleteNote, listNotes } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -57,5 +57,42 @@ describe('putNote race / 409 retry', () => {
     await putNote('c.md', 'caller-write');
     const n = await getNote('c.md');
     expect(n!.content).toBe('caller-write');
+  });
+});
+
+describe('conflict resolution', () => {
+  it('listConflicts is empty when no conflicts exist', async () => {
+    await putNote('a.md', 'A');
+    expect(await listConflicts()).toEqual([]);
+  });
+
+  it('resolveConflict creates a sibling with conflictOf and removes the losing rev', async () => {
+    await putNote('p.md', 'mine');
+    const winningDoc = await getDB().get('p.md');
+    // Force a competing rev — same _id, no _rev, new_edits:false
+    await getDB().bulkDocs([{
+      _id: 'p.md',
+      _rev: '1-aabbccddeeff00112233445566778899',
+      content: 'theirs',
+      title: 'p',
+      tags: [],
+      links: [],
+      createdAt: winningDoc.createdAt,
+      updatedAt: new Date().toISOString(),
+    } as any], { new_edits: false });
+
+    const conflicts = await listConflicts();
+    expect(conflicts.length).toBe(1);
+
+    const siblingIds = await resolveConflict('p.md');
+    expect(siblingIds.length).toBe(1);
+
+    const sibling = await getNote(siblingIds[0]);
+    expect(sibling).not.toBeNull();
+    expect(sibling!.conflictOf).toBe('p.md');
+    expect(['mine', 'theirs']).toContain(sibling!.content);
+
+    // No remaining conflicts on p.md
+    expect(await listConflicts()).toEqual([]);
   });
 });

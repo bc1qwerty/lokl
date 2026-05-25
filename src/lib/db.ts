@@ -10,6 +10,12 @@ export interface NoteDoc {
   links: string[];     // outgoing wiki-links
   createdAt: string;   // ISO 8601
   updatedAt: string;   // ISO 8601
+  // Trash (B1 will use; declared now so types compile)
+  trashed?: boolean;
+  trashedAt?: string;
+  // Conflict (A2/A3 uses)
+  conflictOf?: string;
+  // Legacy soft-delete — migrated to `trashed` by B1's sweeper
   deleted?: boolean;
 }
 
@@ -177,6 +183,35 @@ export function buildFileTree(notes: NoteDoc[]): FileEntry[] {
   }
 
   return sortEntries(root);
+}
+
+export async function listConflicts(): Promise<NoteDoc[]> {
+  const result = await getDB().allDocs({ include_docs: true, conflicts: true });
+  return result.rows
+    .map(r => r.doc as (NoteDoc & { _conflicts?: string[] }) | undefined)
+    .filter((d): d is NoteDoc & { _conflicts: string[] } => !!d && Array.isArray((d as any)._conflicts) && !d.trashed);
+}
+
+export async function resolveConflict(id: string): Promise<string[]> {
+  // Returns the list of newly-created sibling ids ("(conflict-...)" notes).
+  const winning = await getDB().get(id, { conflicts: true } as any) as NoteDoc & { _conflicts?: string[] };
+  const conflicts = (winning as any)._conflicts as string[] | undefined;
+  if (!conflicts?.length) return [];
+  const siblings: string[] = [];
+  for (const rev of conflicts) {
+    const losing = await getDB().get(id, { rev }) as NoteDoc;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const base = id.replace(/\.md$/, '');
+    const siblingId = `${base} (conflict-${ts}).md`;
+    await putNote(siblingId, losing.content);
+    const sibling = await getNote(siblingId);
+    if (sibling) {
+      await getDB().put({ ...sibling, conflictOf: id });
+    }
+    await getDB().remove(id, rev);
+    siblings.push(siblingId);
+  }
+  return siblings;
 }
 
 // Watch for changes (used to replace 3s filesystem polling)

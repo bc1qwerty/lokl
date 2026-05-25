@@ -1,6 +1,13 @@
 import PouchDB from 'pouchdb-browser';
-import { getDB, type NoteDoc } from './db';
+import { getDB, listConflicts, resolveConflict, type NoteDoc } from './db';
 import { syncState, type SyncStatus } from './store';
+
+async function resolveAllConflicts(): Promise<void> {
+  const conflicts = await listConflicts();
+  for (const c of conflicts) {
+    await resolveConflict(c._id);
+  }
+}
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
@@ -41,6 +48,7 @@ export function startSync(): void {
   })
     .on('change', () => {
       updateSyncState('syncing');
+      resolveAllConflicts().catch(err => console.error('Conflict resolve failed:', err));
     })
     .on('paused', () => {
       updateSyncState('synced');

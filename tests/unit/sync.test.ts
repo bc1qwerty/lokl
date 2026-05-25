@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB } from '../../src/lib/db';
+import { setDB, putNote, listConflicts, listNotes } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 import { startSync, stopSync, isSyncing, __setRemoteFactory } from '../../src/lib/sync';
 import { syncState } from '../../src/lib/store';
@@ -57,5 +57,43 @@ describe('sync state machine', () => {
     }
     const doc = await remoteDB.get('s.md');
     expect((doc as any).content).toBe('# Hello');
+  });
+});
+
+describe('sync auto-resolves conflicts', () => {
+  it('keeps both versions after a sync introduces a conflict', async () => {
+    // Create remote DB eagerly so we can seed it before startSync
+    const remoteDB = freshDB('remote-conflict') as unknown as PouchDB.Database<NoteDoc>;
+    __setRemoteFactory(() => remoteDB);
+
+    // Seed both DBs with competing versions of the same id
+    await putNote('s.md', 'local');
+    await remoteDB.bulkDocs([{
+      _id: 's.md',
+      _rev: '1-aabbccddeeff00112233445566778899',
+      content: 'remote',
+      title: 's',
+      tags: [],
+      links: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any], { new_edits: false });
+
+    startSync();
+
+    // Poll until a conflict-sibling appears in listNotes
+    let found = false;
+    for (let i = 0; i < 50; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      const notes = await listNotes();
+      if (notes.some(n => n._id.includes('(conflict-'))) {
+        found = true;
+        break;
+      }
+    }
+
+    stopSync();
+    expect(found).toBe(true);
+    expect(await listConflicts()).toEqual([]);
   });
 });
