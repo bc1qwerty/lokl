@@ -305,6 +305,19 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleNewFile]);
 
+  // Guard tab/window close while content is unsaved
+  useEffect(() => {
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (isDirty.value || saveStatus.value === 'saving') {
+        e.preventDefault();
+        // Required by Chrome (deprecated assignment but still needed):
+        e.returnValue = '';
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
+
   // Show welcome screen until PouchDB is initialized (vault set by loadNotes)
   if (!vault.value) {
     return <WelcomeScreen onLoadComplete={loadNotes} />;
