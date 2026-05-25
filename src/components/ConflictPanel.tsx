@@ -1,6 +1,6 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { listNotes } from '../lib/db';
+import { listNotes, deleteNote } from '../lib/db';
 import type { NoteDoc } from '../lib/db';
 import { t } from '../i18n';
 
@@ -57,6 +57,17 @@ export function ConflictPanel({ onOpen }: Props) {
                   {str.openOriginal}
                 </button>
               )}
+              <button
+                class="conflict-discard"
+                onClick={async () => {
+                  await deleteNote(c._id);
+                  // The 3s poll will refresh items.value; force an immediate refresh too:
+                  const all = await listNotes();
+                  items.value = all.filter(n => !!n.conflictOf);
+                }}
+              >
+                {t.value.conflicts.discard}
+              </button>
             </div>
           </li>
         ))}

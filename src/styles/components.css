@@ -493,6 +493,13 @@
   padding: 0;
 }
 .conflict-open-orig:hover { color: var(--text-secondary); }
+.conflict-discard {
+  font-size: 11px;
+  color: var(--danger, #e05252);
+  cursor: pointer;
+  padding: 0;
+}
+.conflict-discard:hover { opacity: 0.75; }
 
 /* Drop zone */
 .welcome-dropzone {
