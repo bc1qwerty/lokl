@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -17,10 +17,13 @@ describe('db basics', () => {
     expect(await getNote('missing.md')).toBeNull();
   });
 
-  it('soft-deletes (current behavior — pre-trash refactor)', async () => {
-    await putNote('a.md', 'x');
-    await deleteNote('a.md');
-    expect(await getNote('a.md')).toBeNull();
+  it('deleteNote moves to trash', async () => {
+    await putNote('t.md', 'x');
+    await deleteNote('t.md');
+    expect(await getNote('t.md')).toBeNull();
+    const raw = await getDB().get('t.md');
+    expect((raw as any).trashed).toBe(true);
+    expect(typeof (raw as any).trashedAt).toBe('string');
   });
 
   it('lists non-deleted', async () => {
@@ -111,5 +114,79 @@ describe('conflict resolution', () => {
     const siblingIds = await resolveConflict('q.md');
     expect(siblingIds.length).toBe(2);
     expect(new Set(siblingIds).size).toBe(2);  // distinct
+  });
+});
+
+describe('trash + sweeper', () => {
+  it('restoreNote brings back to listNotes', async () => {
+    await putNote('t.md', 'x');
+    await deleteNote('t.md');
+    await restoreNote('t.md');
+    expect((await getNote('t.md'))?.content).toBe('x');
+    const all = await listNotes();
+    expect(all.map(n => n._id)).toContain('t.md');
+  });
+
+  it('purgeNote removes physically', async () => {
+    await putNote('t.md', 'x');
+    await deleteNote('t.md');
+    await purgeNote('t.md');
+    await expect(getDB().get('t.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('listTrash returns only trashed docs', async () => {
+    await putNote('a.md', 'A');
+    await putNote('b.md', 'B');
+    await deleteNote('a.md');
+    const trash = await listTrash();
+    expect(trash.map(n => n._id)).toEqual(['a.md']);
+  });
+
+  it('sweepTrash deletes notes older than 30 days', async () => {
+    await putNote('old.md', 'x');
+    const raw = await getDB().get('old.md');
+    const oldDate = new Date(Date.now() - 31 * 86400000).toISOString();
+    await getDB().put({ ...raw, trashed: true, trashedAt: oldDate });
+    await sweepTrash();
+    await expect(getDB().get('old.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('sweepTrash keeps notes within 30 days', async () => {
+    await putNote('young.md', 'x');
+    const raw = await getDB().get('young.md');
+    const recent = new Date(Date.now() - 1 * 86400000).toISOString();
+    await getDB().put({ ...raw, trashed: true, trashedAt: recent });
+    await sweepTrash();
+    const after = await getDB().get('young.md');
+    expect((after as any).trashed).toBe(true);
+  });
+
+  it('sweepTrash migrates legacy `deleted: true` to trashed', async () => {
+    const now = new Date().toISOString();
+    await getDB().put({
+      _id: 'legacy.md',
+      deleted: true,
+      content: '',
+      title: 'legacy',
+      tags: [],
+      links: [],
+      createdAt: now,
+      updatedAt: now,
+    } as any);
+    await sweepTrash();
+    const raw = await getDB().get('legacy.md');
+    expect((raw as any).trashed).toBe(true);
+    expect((raw as any).deleted).toBeUndefined();
+  });
+
+  it('listNotes excludes trashed AND conflictOf', async () => {
+    await putNote('keep.md', 'k');
+    await putNote('drop.md', 'd');
+    await deleteNote('drop.md');
+    await putNote('side.md', 's');
+    const side = await getDB().get('side.md');
+    await getDB().put({ ...side, conflictOf: 'keep.md' });
+    const visible = await listNotes();
+    expect(visible.map(n => n._id)).toEqual(['keep.md']);
   });
 });

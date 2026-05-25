@@ -80,7 +80,7 @@ function extractLinks(content: string): string[] {
 export async function getNote(id: string): Promise<NoteDoc | null> {
   try {
     const doc = await getDB().get(id);
-    if (doc.deleted) return null;
+    if (doc.deleted || doc.trashed) return null;
     return doc;
   } catch (e: any) {
     if (e.status === 404) return null;
@@ -129,10 +129,50 @@ export async function putNote(id: string, content: string): Promise<void> {
 export async function deleteNote(id: string): Promise<void> {
   try {
     const doc = await getDB().get(id);
-    await getDB().put({ ...doc, deleted: true, updatedAt: new Date().toISOString() });
+    await getDB().put({ ...doc, trashed: true, trashedAt: new Date().toISOString() });
   } catch (e: any) {
     if (e.status === 404) return;
     throw e;
+  }
+}
+
+export async function restoreNote(id: string): Promise<void> {
+  const doc = await getDB().get(id) as any;
+  const { trashed, trashedAt, ...rest } = doc;
+  void trashed; void trashedAt;
+  await getDB().put(rest);
+}
+
+export async function purgeNote(id: string): Promise<void> {
+  const doc = await getDB().get(id);
+  await getDB().remove(doc as NoteDoc & { _rev: string });
+}
+
+export async function listTrash(): Promise<NoteDoc[]> {
+  const result = await getDB().allDocs({ include_docs: true });
+  return result.rows
+    .map(r => r.doc as NoteDoc | undefined)
+    .filter((d): d is NoteDoc => !!d && !!d.trashed);
+}
+
+const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export async function sweepTrash(now: number = Date.now()): Promise<void> {
+  const cutoff = now - TRASH_TTL_MS;
+  const result = await getDB().allDocs({ include_docs: true });
+  for (const row of result.rows) {
+    const doc = row.doc as NoteDoc | undefined;
+    if (!doc) continue;
+    // 1. Legacy `deleted: true` → `trashed: true` (one-time migration on first sweep)
+    if (doc.deleted && !doc.trashed) {
+      const { deleted, ...rest } = doc as any;
+      void deleted;
+      await getDB().put({ ...rest, trashed: true, trashedAt: doc.updatedAt });
+      continue;
+    }
+    // 2. Old trash → physical remove
+    if (doc.trashed && doc.trashedAt && Date.parse(doc.trashedAt) < cutoff) {
+      await getDB().remove(doc as NoteDoc & { _rev: string });
+    }
   }
 }
 
@@ -140,7 +180,7 @@ export async function listNotes(): Promise<NoteDoc[]> {
   const result = await getDB().allDocs({ include_docs: true });
   return result.rows
     .map(r => r.doc!)
-    .filter(d => d && !d.deleted && d._id !== '_settings');
+    .filter(d => d && !d.trashed && !d.deleted && !d.conflictOf && d._id !== '_settings');
 }
 
 // Build FileEntry tree from flat note list (for compatibility with existing components)

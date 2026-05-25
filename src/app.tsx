@@ -6,7 +6,7 @@ import {
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
   isLoading, isReadOnly, addTab, settings,
 } from './lib/store';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
@@ -38,6 +38,7 @@ export function App() {
   // Initialize PouchDB on mount
   useEffect(() => {
     initDB();
+    sweepTrash().catch(e => console.error('sweepTrash failed:', e));
     // Check if DB has any notes — skip WelcomeScreen if so
     getDB().info().then((info) => {
       if (info.doc_count > 0) {
