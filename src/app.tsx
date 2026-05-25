@@ -10,7 +10,9 @@ import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchCh
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
+import { startQuotaMonitor } from './lib/quota';
 import { LoginPanel } from './components/LoginPanel';
+import { QuotaBanner } from './components/QuotaBanner';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
@@ -41,6 +43,7 @@ export function App() {
   useEffect(() => {
     initDB();
     sweepTrash().catch(e => console.error('sweepTrash failed:', e));
+    const stop = startQuotaMonitor();
     // Check if DB has any notes — skip WelcomeScreen if so
     getDB().info().then((info) => {
       if (info.doc_count > 0) {
@@ -51,6 +54,7 @@ export function App() {
         isLoading.value = false;
       }
     });
+    return () => stop();
   }, []);
 
   async function loadNotes() {
@@ -330,6 +334,7 @@ export function App() {
       data-sidebar={sidebarOpen.value ? 'open' : 'closed'}
       data-backlinks={backlinksOpen.value ? 'open' : 'closed'}
     >
+      <QuotaBanner />
       <Toolbar saveStatus={saveStatus.value} onDailyNote={handleDailyNote} />
 
       <Sidebar onFileClick={handleFileClick} onNewFile={handleNewFile}>
