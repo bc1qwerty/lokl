@@ -4,7 +4,7 @@ import {
   vault, fileTree, currentFilePath, currentFileContent, savedContent,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, isReadOnly, addTab, settings,
+  isLoading, addTab, settings,
 } from './lib/store';
 import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
@@ -76,10 +76,9 @@ export function App() {
   // Auto-save with debounce
   useSignalEffect(() => {
     const dirty = isDirty.value;
-    const ro = isReadOnly.value;
     const path = currentFilePath.value;
 
-    if (!dirty || ro || !path) {
+    if (!dirty || !path) {
       if (!dirty) saveStatus.value = 'clean';
       return;
     }
@@ -150,7 +149,6 @@ export function App() {
 
   // New file
   const handleNewFile = useCallback(() => {
-    if (isReadOnly.value) return;
     newFileName.value = '';
     newFileOpen.value = true;
   }, []);
@@ -265,7 +263,7 @@ export function App() {
       if (mod && e.key === 'n') { e.preventDefault(); handleNewFile(); }
       if (mod && e.key === 's') {
         e.preventDefault();
-        if (currentFilePath.value && isDirty.value && !isReadOnly.value) {
+        if (currentFilePath.value && isDirty.value) {
           putNote(currentFilePath.value, currentFileContent.value)
             .then(() => {
               savedContent.value = currentFileContent.value;

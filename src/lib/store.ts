@@ -1,8 +1,8 @@
 import { signal, computed } from '@preact/signals';
-import type { FileEntry, VaultState, ViewMode } from '../types';
+import type { ActiveVault, FileEntry, ViewMode } from '../types';
 
 // Vault
-export const vault = signal<VaultState | null>(null);
+export const vault = signal<ActiveVault | null>(null);
 export const fileTree = signal<FileEntry[]>([]);
 export const isLoading = signal(false);
 
@@ -53,11 +53,6 @@ export const currentFileName = computed(() => {
   const p = currentFilePath.value;
   if (!p) return '';
   return p.split('/').pop()?.replace(/\.md$/, '') || '';
-});
-
-export const isReadOnly = computed(() => {
-  const v = vault.value;
-  return v?.mode === 'fallback';
 });
 
 // Backlinks: path -> set of paths that link to it

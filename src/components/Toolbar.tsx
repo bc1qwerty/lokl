@@ -6,7 +6,6 @@ import {
   sidebarOpen,
   backlinksOpen,
   viewMode,
-  isReadOnly,
   graphOpen,
   settingsOpen,
 } from '../lib/store';
@@ -23,7 +22,6 @@ export function Toolbar({ saveStatus, onDailyNote }: Props) {
   const edStr = t.value.editor;
 
   const statusText =
-    isReadOnly.value ? edStr.readOnly :
     saveStatus === 'dirty' ? edStr.unsaved :
     saveStatus === 'saving' ? edStr.saving :
     saveStatus === 'saved' ? edStr.saved : '';
