@@ -6,6 +6,7 @@ import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
 import { listTrash, purgeNote } from '../lib/db';
+import { toast } from '../lib/toast';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -154,9 +155,9 @@ export function SettingsPanel() {
                 if (!f) return;
                 try {
                   const { imported, conflicts } = await importJSON(f);
-                  alert(`Imported ${imported}. Conflicts kept: ${conflicts}.`);
+                  toast.success(`Imported ${imported}. Conflicts kept: ${conflicts}.`);
                 } catch (err: any) {
-                  alert(`Import failed: ${err?.message ?? 'unknown error'}`);
+                  toast.error(`Import failed: ${err?.message ?? 'unknown error'}`);
                 }
                 (e.target as HTMLInputElement).value = '';
               }} />
@@ -165,7 +166,7 @@ export function SettingsPanel() {
             <button class="btn-secondary" onClick={async () => {
               const trashed = await listTrash();
               if (trashed.length === 0) {
-                alert(str.data.trashEmpty);
+                toast.info(str.data.trashEmpty);
                 return;
               }
               if (!confirm(str.data.emptyTrashConfirm.replace('{n}', String(trashed.length)))) return;
@@ -175,7 +176,7 @@ export function SettingsPanel() {
                   console.warn(`purgeNote failed for ${n._id}:`, err);
                 }
               }
-              alert(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
+              toast.success(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
             }}>{str.data.emptyTrash}</button>
           </div>
         </div>

@@ -25,6 +25,7 @@ import { ContextMenu } from './components/ContextMenu';
 import { GraphView } from './components/GraphView';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ToastContainer } from './components/Toast';
+import { toast } from './lib/toast';
 
 export function App() {
   const saveStatus = useSignal<'clean' | 'dirty' | 'saving' | 'saved'>('clean');
@@ -91,8 +92,13 @@ export function App() {
         saveStatus.value = 'saved';
         if (statusTimerRef.value) clearTimeout(statusTimerRef.value);
         statusTimerRef.value = setTimeout(() => { saveStatus.value = 'clean'; }, 2000);
-      } catch (e) {
+      } catch (e: any) {
         console.error('Save failed:', e);
+        if (e?.name === 'QuotaExceededError' || e?.status === 507) {
+          toast.error('Storage full — empty trash to free space');
+        } else {
+          toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
+        }
         saveStatus.value = 'dirty';
       }
     }, 1000);
@@ -257,10 +263,19 @@ export function App() {
       if (mod && e.key === 's') {
         e.preventDefault();
         if (currentFilePath.value && isDirty.value && !isReadOnly.value) {
-          putNote(currentFilePath.value, currentFileContent.value).then(() => {
-            savedContent.value = currentFileContent.value;
-            saveStatus.value = 'saved';
-          });
+          putNote(currentFilePath.value, currentFileContent.value)
+            .then(() => {
+              savedContent.value = currentFileContent.value;
+              saveStatus.value = 'saved';
+            })
+            .catch((err: any) => {
+              console.error('Save failed (Cmd+S):', err);
+              if (err?.name === 'QuotaExceededError' || err?.status === 507) {
+                toast.error('Storage full — empty trash to free space');
+              } else {
+                toast.error(`Save failed: ${err?.message ?? 'unknown error'}`);
+              }
+            });
         }
       }
       if (mod && e.key === '\\') { e.preventDefault(); sidebarOpen.value = !sidebarOpen.value; }
