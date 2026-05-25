@@ -64,4 +64,35 @@ describe('migrate.exportToFSAA', () => {
     expect(journal?.kind).toBe('directory');
     expect((journal?.children.get('y.md') as any)?.content).toBe('day note');
   });
+
+  it('leaves no .lokl-tmp residue on success', async () => {
+    await putNote('a.md', 'A');
+    await putNote('b.md', 'B');
+    const dir = createMockDir();
+    await exportToFSAA(wrapAsFSAA(dir));
+    for (const name of dir.children.keys()) {
+      expect(name.endsWith('.lokl-tmp')).toBe(false);
+    }
+  });
+
+  it('does not corrupt destination when temp write fails', async () => {
+    await putNote('p.md', 'partial-content');
+    const dir = createMockDir();
+    // Seed the destination so we can detect corruption
+    dir.children.set('p.md', { kind: 'file', name: 'p.md', content: 'ORIGINAL' } as any);
+    // Pre-seed the temp file with failClose so atomicWrite fails before promoting to final
+    dir.children.set('p.md.lokl-tmp', { kind: 'file', name: 'p.md.lokl-tmp', content: '', failClose: true } as any);
+
+    let threw = false;
+    try {
+      await exportToFSAA(wrapAsFSAA(dir));
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+    // Original destination still has its original content
+    expect((dir.children.get('p.md') as any).content).toBe('ORIGINAL');
+    // No .lokl-tmp left behind
+    expect(dir.children.get('p.md.lokl-tmp')).toBeUndefined();
+  });
 });

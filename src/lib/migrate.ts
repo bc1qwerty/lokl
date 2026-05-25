@@ -1,5 +1,43 @@
 import { putNote, listNotes } from './db';
 
+const TMP_SUFFIX = '.lokl-tmp';
+
+async function atomicWrite(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+  content: string,
+): Promise<void> {
+  const tmpName = `${name}${TMP_SUFFIX}`;
+  // Create + write temp file
+  const tmpHandle = await dir.getFileHandle(tmpName, { create: true });
+  const w = await tmpHandle.createWritable();
+  try {
+    await w.write(content);
+    await w.close();
+  } catch (e) {
+    // Best-effort cleanup of the half-written temp file
+    try { await dir.removeEntry(tmpName); } catch { /* ignore */ }
+    throw e;
+  }
+  // Promote temp to final
+  if (typeof (tmpHandle as any).move === 'function') {
+    await (tmpHandle as any).move(name);
+    return;
+  }
+  // Fallback: re-read tmp, write to final, then remove tmp
+  const data = await (await tmpHandle.getFile()).text();
+  const finalHandle = await dir.getFileHandle(name, { create: true });
+  const fw = await finalHandle.createWritable();
+  try {
+    await fw.write(data);
+    await fw.close();
+  } catch (e) {
+    try { await dir.removeEntry(tmpName); } catch { /* ignore */ }
+    throw e;
+  }
+  await dir.removeEntry(tmpName);
+}
+
 export function needsMigration(): boolean {
   return !localStorage.getItem('lokl_storage_migrated');
 }
@@ -64,10 +102,7 @@ export async function exportToFSAA(
     }
 
     const fileName = parts[parts.length - 1];
-    const fileHandle = await currentDir.getFileHandle(fileName, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(note.content);
-    await writable.close();
+    await atomicWrite(currentDir, fileName, note.content);
     exported++;
     onProgress?.(exported, notes.length);
   }
