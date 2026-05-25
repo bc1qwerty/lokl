@@ -16,10 +16,10 @@ export default defineConfig({
       // is unavailable in jsdom — it will be tested in task C4/C5 with a real
       // browser harness.  Excluding it keeps the gate honest for what we have.
       exclude: ['src/lib/fs.ts'],
-      // TODO(X3): Restore to 80/70/80/80 once tasks A1-C6 land full coverage.
-      // Current numbers with fs.ts excluded: stmts≈58%, branches≈45%, fns≈61%, lines≈61%.
-      // Thresholds are set just below actuals so any regression is caught.
-      thresholds: { statements: 55, branches: 38, functions: 53, lines: 58 },
+      // Thresholds set just below actuals (floor(actual)-1) to catch regressions.
+      // Phase 1 actuals (2026-05-25, fs.ts excluded): stmts=64%, branches=53%, fns=58%, lines=68%.
+      // Target (Phase 2+): statements=80, branches=70, functions=80, lines=80.
+      thresholds: { statements: 63, branches: 52, functions: 57, lines: 66 },
     },
   },
 });

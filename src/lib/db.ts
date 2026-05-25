@@ -180,7 +180,7 @@ export async function listNotes(): Promise<NoteDoc[]> {
   const result = await getDB().allDocs({ include_docs: true });
   return result.rows
     .map(r => r.doc!)
-    .filter(d => d && !d.trashed && !d.deleted && !d.conflictOf && d._id !== '_settings');
+    .filter(d => d && !d.trashed && !d.deleted && !d.conflictOf);
 }
 
 // Build FileEntry tree from flat note list (for compatibility with existing components)
