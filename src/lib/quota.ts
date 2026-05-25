@@ -18,8 +18,8 @@ export async function checkQuota(): Promise<void> {
     const r = quota > 0 ? usage / quota : 0;
     quotaRatio.value = r;
     quotaLevel.value = ratioToLevel(r);
-  } catch {
-    // ignore — quota.estimate can fail in some private modes
+  } catch (e) {
+    console.debug('quota.estimate unavailable:', e);
   }
 }
 
