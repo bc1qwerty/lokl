@@ -189,7 +189,7 @@ export async function readTree(vault: VaultState): Promise<FileEntry[]> {
   return [];
 }
 
-// --- Read / Write files ---
+// --- Read files ---
 
 async function resolveFileHandle(
   dirHandle: FileSystemDirectoryHandle,
@@ -215,48 +215,4 @@ export async function readFile(vault: VaultState, path: string): Promise<string>
     return file.text();
   }
   throw new Error('No vault open');
-}
-
-export async function writeFile(
-  vault: VaultState,
-  path: string,
-  content: string
-): Promise<void> {
-  if (vault.mode !== 'native' || !vault.handle) {
-    throw new Error('Write not supported in fallback mode');
-  }
-  const fh = await resolveFileHandle(vault.handle, path);
-  const writable = await fh.createWritable();
-  await writable.write(content);
-  await writable.close();
-}
-
-export async function createFile(
-  vault: VaultState,
-  path: string
-): Promise<void> {
-  if (vault.mode !== 'native' || !vault.handle) {
-    throw new Error('Create not supported in fallback mode');
-  }
-  const parts = path.split('/');
-  let current = vault.handle;
-  for (let i = 0; i < parts.length - 1; i++) {
-    current = await current.getDirectoryHandle(parts[i], { create: true });
-  }
-  await current.getFileHandle(parts[parts.length - 1], { create: true });
-}
-
-export async function deleteFile(
-  vault: VaultState,
-  path: string
-): Promise<void> {
-  if (vault.mode !== 'native' || !vault.handle) {
-    throw new Error('Delete not supported in fallback mode');
-  }
-  const parts = path.split('/');
-  let current = vault.handle;
-  for (let i = 0; i < parts.length - 1; i++) {
-    current = await current.getDirectoryHandle(parts[i]);
-  }
-  await current.removeEntry(parts[parts.length - 1]);
 }
