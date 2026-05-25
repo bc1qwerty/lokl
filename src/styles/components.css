@@ -505,6 +505,38 @@
 }
 .conflict-discard:hover { opacity: 0.75; }
 
+/* Trash panel */
+.trash-panel {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.trash-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 4px 0;
+  width: 100%;
+  text-align: left;
+}
+.trash-toggle:hover { color: var(--text-secondary); }
+.trash-list { list-style: none; padding: 0; margin: 4px 0 0 0; }
+.trash-list li { display: flex; gap: 6px; align-items: center; padding: 2px 0; font-size: 12px; }
+.trash-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.trash-date { color: var(--text-muted); font-size: 11px; }
+.trash-restore, .trash-purge {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+}
+.trash-restore { color: var(--accent); }
+.trash-restore:hover { opacity: 0.75; }
+.trash-purge { color: var(--red); }
+.trash-purge:hover { opacity: 0.75; }
+
 /* Drop zone */
 .welcome-dropzone {
   border: 2px dashed var(--border);

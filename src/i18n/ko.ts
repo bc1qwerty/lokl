@@ -114,6 +114,12 @@ const ko: Locale = {
     openOriginal: 'open original',
     discard: 'discard',
   },
+  trash: {
+    title: 'Trash',
+    restore: 'restore',
+    deleteForever: 'delete forever',
+    empty: 'Trash is empty',
+  },
 };
 
 export default ko;

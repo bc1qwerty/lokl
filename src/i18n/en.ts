@@ -112,6 +112,12 @@ export const en = {
     openOriginal: 'open original',
     discard: 'discard',
   },
+  trash: {
+    title: 'Trash',
+    restore: 'restore',
+    deleteForever: 'delete forever',
+    empty: 'Trash is empty',
+  },
 } as const;
 
 type DeepString<T> = { [K in keyof T]: T[K] extends string ? string : DeepString<T[K]> };

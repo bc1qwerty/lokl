@@ -27,6 +27,7 @@ const zh: Locale = {
   dailyNote: { created: '已创建每日笔记' },
   common: { cancel: '取消', confirm: '确认', close: '关闭', delete: '删除', rename: '重命名', create: '创建' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
+  trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', empty: 'Trash is empty' },
 };
 
 export default zh;

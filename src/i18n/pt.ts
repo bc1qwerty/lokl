@@ -27,6 +27,7 @@ const pt: Locale = {
   dailyNote: { created: 'Nota diária criada' },
   common: { cancel: 'Cancelar', confirm: 'Confirmar', close: 'Fechar', delete: 'Excluir', rename: 'Renomear', create: 'Criar' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
+  trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', empty: 'Trash is empty' },
 };
 
 export default pt;
