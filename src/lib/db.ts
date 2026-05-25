@@ -82,36 +82,39 @@ export async function getNote(id: string): Promise<NoteDoc | null> {
   }
 }
 
+const PUT_MAX_RETRY = 25;
+
 export async function putNote(id: string, content: string): Promise<void> {
   const now = new Date().toISOString();
-  const title = extractTitle(content, id);
-  const tags = extractTags(content);
-  const links = extractLinks(content);
-
-  try {
-    const existing = await getDB().get(id);
-    await getDB().put({
+  for (let attempt = 0; attempt < PUT_MAX_RETRY; attempt++) {
+    // Read RAW (not via getNote) so legacy deleted: true docs are still seen — we
+    // must attach the correct _rev to overwrite them.
+    let existing: NoteDoc | null = null;
+    try {
+      existing = await getDB().get(id);
+    } catch (e: any) {
+      if (e.status !== 404) throw e;
+    }
+    const doc: NoteDoc = {
       _id: id,
-      _rev: existing._rev,
+      _rev: existing?._rev,
       content,
-      title,
-      tags,
-      links,
-      createdAt: existing.createdAt || now,
+      title: extractTitle(content, id),
+      tags: extractTags(content),
+      links: extractLinks(content),
+      createdAt: existing?.createdAt ?? now,
       updatedAt: now,
-    });
-  } catch (e: any) {
-    if (e.status === 404) {
-      await getDB().put({
-        _id: id,
-        content,
-        title,
-        tags,
-        links,
-        createdAt: now,
-        updatedAt: now,
-      });
-    } else {
+    };
+    try {
+      await getDB().put(doc);
+      return;
+    } catch (e: any) {
+      if (e.status === 409 && attempt < PUT_MAX_RETRY - 1) {
+        // Random jitter (0–9 ms) prevents all concurrent callers from
+        // re-reading _rev at exactly the same tick and colliding again.
+        await new Promise(r => setTimeout(r, Math.floor(Math.random() * 10)));
+        continue;
+      }
       throw e;
     }
   }

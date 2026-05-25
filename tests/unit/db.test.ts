@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getNote, putNote, deleteNote, listNotes } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -36,5 +36,26 @@ describe('db basics', () => {
     const n = await getNote('a.md');
     expect(n?.tags).toContain('foo');
     expect(n?.links).toContain('b');
+  });
+});
+
+describe('putNote race / 409 retry', () => {
+  it('survives 20 concurrent writes to the same id', async () => {
+    await Promise.all(
+      Array.from({ length: 20 }, (_, i) => putNote('r.md', `v${i}`))
+    );
+    const n = await getNote('r.md');
+    expect(n).not.toBeNull();
+    expect(n!.content).toMatch(/^v\d+$/);
+  });
+
+  it('retries on 409 after a side-write changes _rev', async () => {
+    await putNote('c.md', 'first');
+    const stale = await getDB().get('c.md');
+    await getDB().put({ ...stale, content: 'side-write' });
+    // putNote should re-fetch the latest _rev and succeed
+    await putNote('c.md', 'caller-write');
+    const n = await getNote('c.md');
+    expect(n!.content).toBe('caller-write');
   });
 });
