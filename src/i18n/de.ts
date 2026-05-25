@@ -26,6 +26,7 @@ const de: Locale = {
   settings: { title: 'Einstellungen', fontSize: 'Schriftgröße', sortBy: 'Dateien sortieren', sortName: 'Name', sortModified: 'Geändert', lineNumbers: 'Zeilennummern', language: 'Sprache', close: 'Schließen' },
   dailyNote: { created: 'Tagesnotiz erstellt' },
   common: { cancel: 'Abbrechen', confirm: 'Bestätigen', close: 'Schließen', delete: 'Löschen', rename: 'Umbenennen', create: 'Erstellen' },
+  conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
 };
 
 export default de;

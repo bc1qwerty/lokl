@@ -26,6 +26,7 @@ const zh: Locale = {
   settings: { title: '设置', fontSize: '字体大小', sortBy: '文件排序', sortName: '名称', sortModified: '修改时间', lineNumbers: '行号', language: '语言', close: '关闭' },
   dailyNote: { created: '已创建每日笔记' },
   common: { cancel: '取消', confirm: '确认', close: '关闭', delete: '删除', rename: '重命名', create: '创建' },
+  conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
 };
 
 export default zh;

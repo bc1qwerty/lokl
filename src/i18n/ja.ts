@@ -109,6 +109,11 @@ const ja: Locale = {
     rename: '名前変更',
     create: '作成',
   },
+  conflicts: {
+    title: 'Conflicts',
+    openOriginal: 'open original',
+    discard: 'discard',
+  },
 };
 
 export default ja;

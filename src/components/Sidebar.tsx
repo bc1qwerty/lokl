@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { t } from '../i18n';
 import { vault, fileTree, searchOpen } from '../lib/store';
 import { FileTree } from './FileTree';
+import { ConflictPanel } from './ConflictPanel';
 
 interface Props {
   onFileClick: (path: string) => void;
@@ -45,6 +46,7 @@ export function Sidebar({ onFileClick, onNewFile, children }: Props) {
           </div>
         )}
       </div>
+      <ConflictPanel onOpen={onFileClick} />
       {children && <div class="sidebar-footer">{children}</div>}
     </aside>
   );

@@ -109,6 +109,11 @@ const ko: Locale = {
     rename: '이름 변경',
     create: '만들기',
   },
+  conflicts: {
+    title: 'Conflicts',
+    openOriginal: 'open original',
+    discard: 'discard',
+  },
 };
 
 export default ko;

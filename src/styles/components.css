@@ -443,6 +443,57 @@
 }
 .tag-files { border-top: 1px solid var(--border-light); }
 
+/* Conflict panel */
+.conflict-panel { border-top: 1px solid var(--border); }
+.conflict-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.conflict-count {
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+}
+.conflict-list { list-style: none; padding: 0; margin: 0; }
+.conflict-item {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px 6px;
+  border-bottom: 1px solid var(--border-light);
+  gap: 3px;
+}
+.conflict-item:last-child { border-bottom: none; }
+.conflict-open {
+  font-size: 12px;
+  color: var(--accent);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.conflict-open:hover { text-decoration: underline; }
+.conflict-actions { display: flex; gap: 6px; }
+.conflict-open-orig {
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+.conflict-open-orig:hover { color: var(--text-secondary); }
+
 /* Drop zone */
 .welcome-dropzone {
   border: 2px dashed var(--border);
