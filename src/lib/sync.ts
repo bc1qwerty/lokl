@@ -6,6 +6,12 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
 let syncHandler: PouchDB.Replication.Sync<NoteDoc> | null = null;
 
+let remoteFactoryOverride: (() => PouchDB.Database<NoteDoc>) | null = null;
+
+export function __setRemoteFactory(f: (() => PouchDB.Database<NoteDoc>) | null): void {
+  remoteFactoryOverride = f;
+}
+
 function updateSyncState(status: SyncStatus, error?: string) {
   syncState.value = {
     status,
@@ -18,12 +24,14 @@ export function startSync(): void {
   stopSync();
 
   const localDB = getDB();
-  const remoteDB = new PouchDB<NoteDoc>(`${API_URL}/lokl/db`, {
-    fetch(url, opts) {
-      (opts as any).credentials = 'include';
-      return PouchDB.fetch(url, opts);
-    },
-  });
+  const remoteDB = remoteFactoryOverride
+    ? remoteFactoryOverride()
+    : new PouchDB<NoteDoc>(`${API_URL}/lokl/db`, {
+        fetch(url, opts) {
+          (opts as any).credentials = 'include';
+          return PouchDB.fetch(url, opts);
+        },
+      });
 
   updateSyncState('syncing');
 
