@@ -414,6 +414,15 @@
   outline: none;
 }
 .settings-select:focus { border-color: var(--accent); }
+.settings-import-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.settings-import-label input[type="file"] { font-size: 12px; }
 
 /* Tags */
 .tags-section { border-top: 1px solid var(--border); }

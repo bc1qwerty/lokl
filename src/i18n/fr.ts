@@ -23,7 +23,7 @@ const fr: Locale = {
   graph: { title: 'Vue Graphe', noData: 'Aucune connexion trouvée', close: 'Fermer' },
   tags: { title: 'Tags', none: 'Aucun tag', clearFilter: 'Effacer le filtre' },
   contextMenu: { rename: 'Renommer', delete: 'Supprimer', duplicateFile: 'Dupliquer', copyPath: 'Copier le chemin', newFileHere: 'Nouveau fichier ici' },
-  settings: { title: 'Paramètres', fontSize: 'Taille de police', sortBy: 'Trier les fichiers', sortName: 'Nom', sortModified: 'Modifié', lineNumbers: 'Numéros de ligne', language: 'Langue', close: 'Fermer' },
+  settings: { title: 'Paramètres', fontSize: 'Taille de police', sortBy: 'Trier les fichiers', sortName: 'Nom', sortModified: 'Modifié', lineNumbers: 'Numéros de ligne', language: 'Langue', close: 'Fermer', data: { title: 'Data', exportJson: 'Export JSON', exportZip: 'Export ZIP', importJson: 'Import JSON', emptyTrash: 'Empty trash', trashEmpty: 'Trash is already empty.', emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.' } },
   dailyNote: { created: 'Note du jour créée' },
   common: { cancel: 'Annuler', confirm: 'Confirmer', close: 'Fermer', delete: 'Supprimer', rename: 'Renommer', create: 'Créer' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },

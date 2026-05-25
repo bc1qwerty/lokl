@@ -97,6 +97,15 @@ const ja: Locale = {
     lineNumbers: '行番号',
     language: '言語',
     close: '閉じる',
+    data: {
+      title: 'Data',
+      exportJson: 'Export JSON',
+      exportZip: 'Export ZIP',
+      importJson: 'Import JSON',
+      emptyTrash: 'Empty trash',
+      trashEmpty: 'Trash is already empty.',
+      emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+    },
   },
   dailyNote: {
     created: '今日のノートを作成しました',

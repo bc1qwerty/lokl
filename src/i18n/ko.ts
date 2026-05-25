@@ -97,6 +97,15 @@ const ko: Locale = {
     lineNumbers: '줄 번호',
     language: '언어',
     close: '닫기',
+    data: {
+      title: 'Data',
+      exportJson: 'Export JSON',
+      exportZip: 'Export ZIP',
+      importJson: 'Import JSON',
+      emptyTrash: 'Empty trash',
+      trashEmpty: 'Trash is already empty.',
+      emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+    },
   },
   dailyNote: {
     created: '오늘의 노트가 생성되었습니다',

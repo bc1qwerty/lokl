@@ -95,6 +95,15 @@ export const en = {
     lineNumbers: 'Line numbers',
     language: 'Language',
     close: 'Close',
+    data: {
+      title: 'Data',
+      exportJson: 'Export JSON',
+      exportZip: 'Export ZIP',
+      importJson: 'Import JSON',
+      emptyTrash: 'Empty trash',
+      trashEmpty: 'Trash is already empty.',
+      emptyTrashConfirm: 'Permanently delete {n} notes? This cannot be undone.',
+    },
   },
   dailyNote: {
     created: 'Daily note created',
