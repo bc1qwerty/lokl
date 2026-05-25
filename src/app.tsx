@@ -24,6 +24,7 @@ import { QuickOpen } from './components/QuickOpen';
 import { ContextMenu } from './components/ContextMenu';
 import { GraphView } from './components/GraphView';
 import { SettingsPanel } from './components/SettingsPanel';
+import { ToastContainer } from './components/Toast';
 
 export function App() {
   const saveStatus = useSignal<'clean' | 'dirty' | 'saving' | 'saved'>('clean');
@@ -380,6 +381,8 @@ export function App() {
           </div>
         </div>
       )}
+
+      <ToastContainer />
     </div>
   );
 }
