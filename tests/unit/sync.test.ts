@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, putNote, listConflicts, listNotes } from '../../src/lib/db';
+import { setDB, getDB, putNote, listConflicts } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 import { startSync, stopSync, isSyncing, __setRemoteFactory } from '../../src/lib/sync';
 import { syncState } from '../../src/lib/store';
@@ -81,12 +81,13 @@ describe('sync auto-resolves conflicts', () => {
 
     startSync();
 
-    // Poll until a conflict-sibling appears in listNotes
+    // Poll until a conflict-sibling appears in the raw DB (bypasses listNotes filter)
     let found = false;
     for (let i = 0; i < 50; i++) {
       await new Promise(r => setTimeout(r, 100));
-      const notes = await listNotes();
-      if (notes.some(n => n._id.includes('(conflict-'))) {
+      const all = await getDB().allDocs({ include_docs: true });
+      const docs = all.rows.map(r => r.doc).filter(Boolean) as Array<any>;
+      if (docs.some(d => typeof d._id === 'string' && d._id.includes('(conflict-') && d.conflictOf === 's.md')) {
         found = true;
         break;
       }
