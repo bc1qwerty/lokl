@@ -27,6 +27,10 @@ export function getDB(): PouchDB.Database<NoteDoc> {
   return db;
 }
 
+export function setDB(instance: PouchDB.Database<NoteDoc>): void {
+  db = instance;
+}
+
 // Extract title from markdown content
 function extractTitle(content: string, path: string): string {
   const match = content.match(/^#\s+(.+)$/m);
