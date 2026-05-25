@@ -489,13 +489,17 @@
 .conflict-open-orig {
   font-size: 11px;
   color: var(--text-muted);
+  background: none;
+  border: none;
   cursor: pointer;
   padding: 0;
 }
 .conflict-open-orig:hover { color: var(--text-secondary); }
 .conflict-discard {
   font-size: 11px;
-  color: var(--danger, #e05252);
+  color: var(--red);
+  background: none;
+  border: none;
   cursor: pointer;
   padding: 0;
 }

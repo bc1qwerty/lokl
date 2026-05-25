@@ -59,6 +59,8 @@ export function ConflictPanel({ onOpen }: Props) {
               )}
               <button
                 class="conflict-discard"
+                title={`${t.value.conflicts.discard}: ${c._id}`}
+                aria-label={`${t.value.conflicts.discard}: ${c._id}`}
                 onClick={async () => {
                   await deleteNote(c._id);
                   // The 3s poll will refresh items.value; force an immediate refresh too:
