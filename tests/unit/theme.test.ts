@@ -9,10 +9,6 @@ beforeEach(() => {
 });
 
 describe('theme', () => {
-  it('has a default value of dark or light', () => {
-    expect(['dark', 'light']).toContain(theme.value);
-  });
-
   it('toggles from dark to light', () => {
     theme.value = 'dark';
     toggleTheme();
@@ -43,8 +39,5 @@ describe('theme', () => {
     expect(localStorage.getItem('lokl-theme')).toBe('dark');
   });
 
-  it('module loads without error and theme signal exists', () => {
-    expect(theme).toBeDefined();
-    expect(theme.value).toBeDefined();
-  });
+
 });

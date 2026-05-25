@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   getUser,
   isAuthenticated,
@@ -15,6 +15,10 @@ const mockUser: TxidUser = {
 
 beforeEach(() => {
   // Reset window.txidAuth before each test
+  delete (window as any).txidAuth;
+});
+
+afterEach(() => {
   delete (window as any).txidAuth;
 });
 
