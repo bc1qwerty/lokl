@@ -95,4 +95,21 @@ describe('conflict resolution', () => {
     // No remaining conflicts on p.md
     expect(await listConflicts()).toEqual([]);
   });
+
+  it('disambiguates sibling ids when a doc has multiple conflicting revs', async () => {
+    await putNote('q.md', 'mine');
+    const winning = await getDB().get('q.md');
+    // Two competing revs at the same level
+    await getDB().bulkDocs([
+      { _id: 'q.md', _rev: '1-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1', content: 'theirs-a', title: 'q', tags: [], links: [], createdAt: winning.createdAt, updatedAt: new Date().toISOString() } as any,
+      { _id: 'q.md', _rev: '1-b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2', content: 'theirs-b', title: 'q', tags: [], links: [], createdAt: winning.createdAt, updatedAt: new Date().toISOString() } as any,
+    ], { new_edits: false });
+
+    const conflicts = await listConflicts();
+    expect(conflicts.length).toBe(1);
+
+    const siblingIds = await resolveConflict('q.md');
+    expect(siblingIds.length).toBe(2);
+    expect(new Set(siblingIds).size).toBe(2);  // distinct
+  });
 });

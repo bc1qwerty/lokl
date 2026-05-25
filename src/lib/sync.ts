@@ -2,10 +2,25 @@ import PouchDB from 'pouchdb-browser';
 import { getDB, listConflicts, resolveConflict, type NoteDoc } from './db';
 import { syncState, type SyncStatus } from './store';
 
+let conflictResolverRunning = false;
+let conflictResolverPending = false;
+
 async function resolveAllConflicts(): Promise<void> {
-  const conflicts = await listConflicts();
-  for (const c of conflicts) {
-    await resolveConflict(c._id);
+  if (conflictResolverRunning) {
+    conflictResolverPending = true;
+    return;
+  }
+  conflictResolverRunning = true;
+  try {
+    do {
+      conflictResolverPending = false;
+      const conflicts = await listConflicts();
+      for (const c of conflicts) {
+        await resolveConflict(c._id);
+      }
+    } while (conflictResolverPending);
+  } finally {
+    conflictResolverRunning = false;
   }
 }
 
