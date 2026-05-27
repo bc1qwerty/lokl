@@ -1,6 +1,19 @@
 import JSZip from 'jszip';
-import { getDB, putNote, getNote } from './db';
+import { getDB, getNote } from './db';
 import type { NoteDoc } from './db';
+
+// Raw existence check that includes trashed/deleted docs — getNote()
+// filters them out, which would let us re-import on top of a trashed
+// row and trigger a PouchDB rev conflict.
+async function rawExists(id: string): Promise<boolean> {
+  try {
+    await getDB().get(id);
+    return true;
+  } catch (e: unknown) {
+    if ((e as { status?: number }).status === 404) return false;
+    throw e;
+  }
+}
 
 export interface BackupPayload {
   version: 1;
@@ -56,23 +69,27 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
   let conflicts = 0;
   for (const note of payload.notes) {
     if (!note?._id) continue;
-    const existing = await getNote(note._id);
-    if (!existing) {
-      await putNote(note._id, note.content ?? '');
+    // Strip any stray _rev the payload might still carry (exportJSON
+    // already does this, but defend against hand-edited blobs).
+    const { _rev: _, ...payloadDoc } = note as NoteDoc & { _rev?: string };
+    const exists = await rawExists(note._id);
+    if (!exists) {
+      // Preserve every field from the backup — trashed/trashedAt/tags/
+      // links/title/createdAt/conflictOf round-trip with full fidelity.
+      await getDB().put(payloadDoc);
       imported++;
       continue;
     }
-    if (existing.content === note.content) continue;
-    // Collision: keep both
+    const existing = await getNote(note._id);
+    if (existing && existing.content === note.content) continue;
+    // Collision: keep both. The sibling inherits the payload's metadata
+    // (tags, trashed flag, etc.) but lives at a new id and points back
+    // at the original via conflictOf.
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const rand = Math.random().toString(36).slice(2, 8);
     const base = note._id.replace(/\.md$/, '');
     const siblingId = `${base} (conflict-${ts}-${rand}).md`;
-    await putNote(siblingId, note.content ?? '');
-    const sibling = await getNote(siblingId);
-    if (sibling) {
-      await getDB().put({ ...sibling, conflictOf: note._id });
-    }
+    await getDB().put({ ...payloadDoc, _id: siblingId, conflictOf: note._id });
     conflicts++;
   }
   return { imported, conflicts };
