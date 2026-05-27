@@ -6,3 +6,8 @@ dist/
 # Environment
 .env
 .env.*
+
+# Test artifacts
+/coverage/
+/playwright-report/
+/test-results/

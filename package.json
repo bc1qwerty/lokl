@@ -11,7 +11,9 @@
     "deploy": "npm run build && npx gh-pages -d dist",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -36,6 +38,7 @@
     "preact": "^10.29.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@preact/preset-vite": "^2.9.0",
     "@types/pouchdb-browser": "^6.1.5",
     "@vitest/coverage-v8": "^4.1.7",
