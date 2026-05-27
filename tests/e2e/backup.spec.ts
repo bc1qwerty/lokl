@@ -121,16 +121,16 @@ test('export backup, clear vault, import backup → all notes restored', async (
   fs.unlinkSync(tmpPath);
 });
 
-// ─── TEST 2: exported JSON blob includes trashed docs; both notes import as live
+// ─── TEST 2: trash status round-trips end-to-end (export → wipe → import)
 //
-// exportJSON() calls allDocs() without filtering, so the trashed doc is present
-// in the JSON payload. However importJSON() calls putNote() which only stores
-// content — it does not re-apply the `trashed` flag. As a result, after import
-// both notes appear in the main list (Trash is empty). This test verifies that
-// documented behaviour: the blob preserves trash metadata at the JSON level, but
-// the import round-trip brings every doc back as a live note.
+// exportJSON() includes trashed docs (allDocs() without filtering).
+// importJSON() now uses getDB().put(payloadDoc) directly (replacing the
+// earlier putNote-only path) so every NoteDoc field — including
+// `trashed`, `trashedAt`, `tags`, `links`, `title` — survives the
+// round-trip. After import the live note is back in the main list and
+// the trashed note is back in the Trash panel.
 
-test('export includes trashed doc in blob; both notes restored as live on import', async ({ page }) => {
+test('export → import round-trips trashed flag (note returns to Trash)', async ({ page }) => {
   page.on('dialog', async (dialog) => { await dialog.accept(); });
 
   await freshStart(page);
@@ -169,15 +169,21 @@ test('export includes trashed doc in blob; both notes restored as live on import
   await expect(page.locator('.toast-success .toast-message')).toBeVisible({ timeout: 8_000 });
   await page.keyboard.press('Escape');
 
-  // importJSON() uses putNote() which ignores the trashed flag →
-  // both notes surface in the main list (Trash count stays 0)
+  // Live note is back in the main list; trashed note is NOT (FileTree
+  // filters out trashed docs; TrashPanel renders by `_id` in `.trash-path`).
   await expect(page.locator('.tree-item-name', { hasText: liveName })).toBeVisible({ timeout: 8_000 });
-  await expect(page.locator('.tree-item-name', { hasText: trashedName })).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('.tree-item-name', { hasText: trashedName })).toHaveCount(0);
 
-  // Trash panel should be empty (trashed flag was not re-applied)
+  // Trash panel shows (1) and contains the trashed note's _id.
+  // TrashPanel polls listTrash() every 5s, so allow 7s for the count
+  // to refresh after the importJSON write lands.
   const trashToggle = page.locator('.trash-toggle');
   await expect(trashToggle).toBeVisible({ timeout: 3_000 });
-  await expect(trashToggle).toContainText('(0)', { timeout: 3_000 });
+  await expect(trashToggle).toContainText('(1)', { timeout: 7_000 });
+  await trashToggle.click();
+  await expect(
+    page.locator('.trash-list .trash-path', { hasText: `${trashedName}.md` }),
+  ).toBeVisible({ timeout: 3_000 });
 
   // Clean up temp file
   fs.unlinkSync(tmpPath);
