@@ -7,6 +7,7 @@ dist/
 .env
 .env.*
 
-# Playwright (Phase 2 E2E)
+# Test artifacts
+/coverage/
 /playwright-report/
 /test-results/
