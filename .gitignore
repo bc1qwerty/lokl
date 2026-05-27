@@ -6,3 +6,7 @@ dist/
 # Environment
 .env
 .env.*
+
+# Playwright (Phase 2 E2E)
+/playwright-report/
+/test-results/
