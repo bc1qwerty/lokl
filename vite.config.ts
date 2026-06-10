@@ -25,6 +25,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // og-image.png is for social crawlers only — keep it out of the SW precache
+        globIgnores: ['og-image.png'],
       },
     }),
   ],
