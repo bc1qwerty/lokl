@@ -35,7 +35,8 @@ Lokl uses the [File System Access API](https://developer.mozilla.org/en-US/docs/
 
 ## Quick Start
 
-**Try it now:** [https://bc1qwerty.github.io/lokl/](https://bc1qwerty.github.io/lokl/)
+**Try it now:** [https://lokl.txid.uk/](https://lokl.txid.uk/)
+(also published to [GitHub Pages](https://bc1qwerty.github.io/lokl/))
 
 Or run locally:
 

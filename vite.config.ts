@@ -3,8 +3,15 @@ import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve } from 'path';
 
+// One build is published twice: rsynced to lokl.txid.uk, which serves it from
+// the domain root, and pushed to gh-pages, where GitHub serves it from /lokl/.
+// A single hardcoded base cannot be right for both — with '/' the GitHub Pages
+// copy asked for /assets/… and rendered a blank page, which is what the README
+// has been pointing people at.
+const base = process.env.VITE_BASE || '/';
+
 export default defineConfig({
-  base: '/',
+  base,
   plugins: [
     preact(),
     VitePWA({
@@ -17,10 +24,12 @@ export default defineConfig({
         theme_color: '#0d1117',
         background_color: '#0d1117',
         display: 'standalone',
+        // Absolute icon paths point outside the app when it is served from a
+        // subpath, so they follow the base too.
         icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: `${base}icon-192.png`, sizes: '192x192', type: 'image/png' },
+          { src: `${base}icon-512.png`, sizes: '512x512', type: 'image/png' },
+          { src: `${base}icon-maskable-512.png`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {

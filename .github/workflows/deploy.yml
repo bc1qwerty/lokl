@@ -14,13 +14,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # Root build for lokl.txid.uk, which serves from the domain root.
       - run: npm run build
-      - name: Configure git author
-        run: |
-          git config --global user.name "github-actions-bot"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-      - run: npx gh-pages -d dist
       - name: Sync dist to VPS (lokl.txid.uk)
         env:
           SSH_KEY: ${{ secrets.ORACLE_VPS_SSH_KEY }}
@@ -41,3 +36,25 @@ jobs:
             echo "::error::live https://lokl.txid.uk/ does not reference $BUNDLE"
             exit 1
           fi
+
+      # GitHub Pages serves this repo from /lokl/, so it needs its own build.
+      # One build cannot satisfy both: with the root base the Pages copy asked
+      # for /assets/… and rendered a blank page, and nothing here noticed
+      # because only lokl.txid.uk was ever verified.
+      - name: Build for GitHub Pages (/lokl/)
+        run: VITE_BASE=/lokl/ npm run build
+      - name: Configure git author
+        run: |
+          git config --global user.name "github-actions-bot"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+      - run: npx gh-pages -d dist
+      - name: Verify the Pages build points under /lokl/
+        run: |
+          if grep -qE 'src="/assets/' dist/index.html; then
+            echo "::error::Pages build still references root-absolute /assets/ — base did not apply"
+            exit 1
+          fi
+          grep -qE 'src="/lokl/assets/' dist/index.html \
+            || { echo "::error::no /lokl/assets/ reference in the Pages build"; exit 1; }
+          echo "OK: Pages build references /lokl/assets/"
