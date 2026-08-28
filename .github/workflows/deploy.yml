@@ -2,6 +2,9 @@ name: Deploy
 on:
   push:
     tags: ['v*']
+  # Deploys were tag-only, so a fix to the build itself could not ship without
+  # inventing a release. This lets the same job be run on demand.
+  workflow_dispatch:
 jobs:
   deploy:
     runs-on: ubuntu-latest
