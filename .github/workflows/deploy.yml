@@ -40,24 +40,30 @@ jobs:
             exit 1
           fi
 
-      # GitHub Pages serves this repo from /lokl/, so it needs its own build.
-      # One build cannot satisfy both: with the root base the Pages copy asked
-      # for /assets/… and rendered a blank page, and nothing here noticed
-      # because only lokl.txid.uk was ever verified.
-      - name: Build for GitHub Pages (/lokl/)
-        run: VITE_BASE=/lokl/ npm run build
-      - name: Configure git author
+      # ⚠ GitHub Pages 미러(bc1qwerty.github.io/lokl)는 2026-09-05 은퇴했다.
+      # 그 origin 은 api.txid.uk CORS 허용 목록 밖이라 라이트닝 로그인·동기화
+      # (auth/me·challenge 등)가 전부 CORS 로 차단됐다 — 사용자가 미러 URL 로
+      # 접속해 "Failed to fetch" 를 겪었다. 정본은 lokl.txid.uk 하나이고,
+      # gh-pages 브랜치에는 lokl.txid.uk 로 보내는 리다이렉트 스텁만 배포한다
+      # (해시 경로 보존). 앱을 다시 gh-pages 에 올리려면 그 전에 api CORS 에
+      # https://bc1qwerty.github.io 를 추가해야 한다(그 origin 은 다른 Pages
+      # 프로젝트와 공유되니 credentials 허용 범위 확대를 감수할 때만).
+      - name: Publish redirect stub to GitHub Pages (mirror retired)
         run: |
+          mkdir -p gh-redirect
+          cat > gh-redirect/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="en"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Lokl moved to lokl.txid.uk</title>
+          <meta http-equiv="refresh" content="0; url=https://lokl.txid.uk/">
+          <link rel="canonical" href="https://lokl.txid.uk/">
+          <meta name="robots" content="noindex">
+          <script>location.replace('https://lokl.txid.uk/' + (location.hash || ''));</script>
+          </head><body><p>Lokl은 <a href="https://lokl.txid.uk/">lokl.txid.uk</a>로 이전했습니다. 이동 중…</p></body></html>
+          HTML
+          cp gh-redirect/index.html gh-redirect/404.html
           git config --global user.name "github-actions-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-      - run: npx gh-pages -d dist
-      - name: Verify the Pages build points under /lokl/
-        run: |
-          if grep -qE 'src="/assets/' dist/index.html; then
-            echo "::error::Pages build still references root-absolute /assets/ — base did not apply"
-            exit 1
-          fi
-          grep -qE 'src="/lokl/assets/' dist/index.html \
-            || { echo "::error::no /lokl/assets/ reference in the Pages build"; exit 1; }
-          echo "OK: Pages build references /lokl/assets/"
+          npx gh-pages -d gh-redirect --message "chore: keep mirror redirecting to lokl.txid.uk"
