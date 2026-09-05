@@ -1,6 +1,5 @@
 import { settings, updateSettings, settingsOpen, authState, syncState } from '../lib/store';
 import { getUser, openLogin } from '../lib/auth';
-import { startSync, stopSync } from '../lib/sync';
 import { SubscriptionPanel } from './SubscriptionPanel';
 import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';

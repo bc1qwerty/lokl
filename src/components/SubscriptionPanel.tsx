@@ -1,6 +1,7 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { authState } from '../lib/store';
+import { notifySubscriptionChanged } from '../lib/sync-controller';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
@@ -69,6 +70,8 @@ export function SubscriptionPanel() {
               invoice.value = null;
               checking.value = false;
               await fetchSubscription();
+              // 결제 확정은 auth 상태 변화가 아니라서 컨트롤러가 못 본다 — 직접 재평가.
+              notifySubscriptionChanged();
             }
           }
         } catch { /* retry */ }

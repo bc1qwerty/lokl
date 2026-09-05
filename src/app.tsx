@@ -11,6 +11,7 @@ import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
 import { startQuotaMonitor } from './lib/quota';
+import { initSyncController } from './lib/sync-controller';
 import { LoginPanel } from './components/LoginPanel';
 import { QuotaBanner } from './components/QuotaBanner';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -44,6 +45,7 @@ export function App() {
     initDB();
     sweepTrash().catch(e => console.error('sweepTrash failed:', e));
     const stop = startQuotaMonitor();
+    const stopSyncController = initSyncController();
     // Check if DB has any notes — skip WelcomeScreen if so
     getDB().info().then((info) => {
       if (info.doc_count > 0) {
@@ -54,7 +56,7 @@ export function App() {
         isLoading.value = false;
       }
     });
-    return () => stop();
+    return () => { stop(); stopSyncController(); };
   }, []);
 
   async function loadNotes() {
