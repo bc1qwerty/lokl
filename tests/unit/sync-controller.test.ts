@@ -23,10 +23,13 @@ beforeEach(() => {
   syncState.value = { status: 'offline' };
 });
 
-afterEach(() => {
+afterEach(async () => {
   dispose?.();
   dispose = null;
   stopSync();
+  // PouchDB sync 취소는 비동기로 이벤트를 몇 번 더 뱉는다 — 리모트 팩토리와
+  // fetch 스텁을 걷기 전에 배출을 기다려야 다음 테스트로 unhandled 가 새지 않는다.
+  await tick();
   __setRemoteFactory(null);
   vi.unstubAllGlobals();
 });

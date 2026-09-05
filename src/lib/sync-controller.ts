@@ -46,9 +46,12 @@ export function notifySubscriptionChanged(): void {
 /** app 기동 시 1회 연결. 반환값은 dispose (effect 해제 + 동기화 중지). */
 export function initSyncController(): () => void {
   const dispose = effect(() => {
-    // effect 는 authState 구독용 — 실제 판정은 비동기 evaluate 가 한다.
+    // effect 는 authState 구독용으로만 쓴다. evaluate 는 stopSync 를 통해
+    // syncState 를 읽고-쓰는데, effect 실행 중에 하면 그 읽기가 의존성으로
+    // 잡혀 signals 가 "Cycle detected" 를 던진다 — 마이크로태스크로 미뤄
+    // effect 추적 밖에서 실행한다.
     void authState.value.status;
-    void evaluate();
+    queueMicrotask(() => { void evaluate(); });
   });
   return () => {
     dispose();
