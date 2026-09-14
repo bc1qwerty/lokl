@@ -240,10 +240,11 @@ export async function resolveConflict(id: string): Promise<string[]> {
   const siblings: string[] = [];
   for (const rev of conflicts) {
     const losing = await getDB().get(id, { rev }) as NoteDoc;
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const base = id.replace(/\.md$/, '');
-    const revShort = rev.split('-')[1]?.slice(0, 6) ?? rev.slice(0, 6);
-    const siblingId = `${base} (conflict-${ts}-${revShort}).md`;
+    // Deterministic sibling id (rev only, no local timestamp): every client
+    // resolving the same conflict computes the same id, so the second writer
+    // overwrites via putNote instead of duplicating the note.
+    const siblingId = `${base} (conflict-${rev}).md`;
     await putNote(siblingId, losing.content);
     const sibling = await getNote(siblingId);
     if (sibling) {

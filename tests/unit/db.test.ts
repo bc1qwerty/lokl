@@ -115,6 +115,27 @@ describe('conflict resolution', () => {
     expect(siblingIds.length).toBe(2);
     expect(new Set(siblingIds).size).toBe(2);  // distinct
   });
+
+  it('sibling id is deterministic (rev-based) so concurrent resolvers converge', async () => {
+    await putNote('r.md', 'mine');
+    await getDB().bulkDocs([{
+      _id: 'r.md',
+      _rev: '1-cccccccccccccccccccccccccccccccc',
+      content: 'theirs',
+      title: 'r',
+      tags: [],
+      links: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any], { new_edits: false });
+
+    const winning = await getDB().get('r.md', { conflicts: true } as any) as any;
+    const losingRev = winning._conflicts[0] as string;
+
+    const siblingIds = await resolveConflict('r.md');
+    // No local timestamp in the id — every client computes this exact id.
+    expect(siblingIds).toEqual([`r (conflict-${losingRev}).md`]);
+  });
 });
 
 describe('trash + sweeper', () => {

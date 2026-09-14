@@ -3,11 +3,11 @@ import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve } from 'path';
 
-// One build is published twice: rsynced to lokl.txid.uk, which serves it from
-// the domain root, and pushed to gh-pages, where GitHub serves it from /lokl/.
-// A single hardcoded base cannot be right for both — with '/' the GitHub Pages
-// copy asked for /assets/… and rendered a blank page, which is what the README
-// has been pointing people at.
+// Published to lokl.txid.uk, served from the domain root. The gh-pages mirror
+// was retired 2026-09-05 (deploy.yml now pushes only a redirect stub) because
+// that origin is outside api.txid.uk's CORS allowlist. VITE_BASE stays only in
+// case a subpath deployment is ever revived — which would need the api CORS
+// change first (see CLAUDE.md).
 const base = process.env.VITE_BASE || '/';
 
 export default defineConfig({
@@ -15,7 +15,9 @@ export default defineConfig({
   plugins: [
     preact(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' so main.tsx's onNeedRefresh confirm actually runs — autoUpdate
+      // reloaded unconditionally on SW activation, discarding unsaved edits.
+      registerType: 'prompt',
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Lokl — Local Knowledge Base',

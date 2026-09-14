@@ -53,8 +53,13 @@ export function initSyncController(): () => void {
     void authState.value.status;
     queueMicrotask(() => { void evaluate(); });
   });
+  // 구독 확인 fetch 순단(오프라인 기동·api 순단)이 '구독 없음'으로 그 세션
+  // 내내 굳지 않도록, 네트워크 복귀 시 재평가한다.
+  const onOnline = () => { void evaluate(); };
+  window.addEventListener('online', onOnline);
   return () => {
     dispose();
+    window.removeEventListener('online', onOnline);
     stopSync();
   };
 }

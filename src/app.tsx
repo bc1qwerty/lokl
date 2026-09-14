@@ -39,6 +39,7 @@ export function App() {
   const renameValue = useSignal('');
   const saveTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
   const statusTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
+  const dbError = useSignal<string | null>(null);
 
   // Initialize PouchDB on mount
   useEffect(() => {
@@ -55,6 +56,12 @@ export function App() {
         vault.value = null;
         isLoading.value = false;
       }
+    }).catch((e: any) => {
+      // IndexedDB refused to open (corruption, private mode, quota). Without
+      // this the app fell through to WelcomeScreen as if the data were gone.
+      console.error('Storage unavailable:', e);
+      dbError.value = e?.message ?? 'IndexedDB error';
+      isLoading.value = false;
     });
     return () => { stop(); stopSyncController(); };
   }, []);
@@ -70,6 +77,9 @@ export function App() {
         updateLinksForFile(note._id, note.content);
       }
       vault.value = { mode: 'pouchdb', name: 'lokl' };
+    } catch (e: any) {
+      console.error('Failed to load notes:', e);
+      dbError.value = e?.message ?? 'IndexedDB error';
     } finally {
       isLoading.value = false;
     }
@@ -165,14 +175,18 @@ export function App() {
       fileTree.value = buildFileTree(notes);
       newFileOpen.value = false;
       await handleFileClick(path);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to create file:', e);
+      toast.error(`Create failed: ${e?.message ?? 'unknown error'}`);
     }
   }, [handleFileClick]);
 
   // Daily note
   const handleDailyNote = useCallback(async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    // Local date, not toISOString (UTC) — a KST user before 09:00 would get
+    // yesterday's note.
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const path = `${today}.md`;
     const existing = await getNote(path);
     if (existing) {
@@ -225,8 +239,9 @@ export function App() {
       closeTab(path);
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Delete failed:', e);
+      toast.error(`Delete failed: ${e?.message ?? 'unknown error'}`);
     }
   }, []);
 
@@ -320,6 +335,21 @@ export function App() {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
+
+  // Storage failed to open — showing WelcomeScreen here would look like data
+  // loss and invite a re-import onto a broken DB.
+  if (dbError.value) {
+    return (
+      <div class="welcome">
+        <div class="welcome-logo">Lokl</div>
+        <p class="welcome-tagline">Storage unavailable: {dbError.value}</p>
+        <p class="welcome-tagline">
+          Your notes were not deleted — the browser could not open local storage.
+          Reload to retry; private browsing can block IndexedDB.
+        </p>
+      </div>
+    );
+  }
 
   // Show welcome screen until PouchDB is initialized (vault set by loadNotes)
   if (!vault.value) {

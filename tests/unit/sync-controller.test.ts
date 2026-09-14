@@ -70,6 +70,18 @@ describe('sync-controller', () => {
     expect(isSyncing()).toBe(false);
   });
 
+  it('fetch 순단으로 꺼졌어도 online 복귀 시 재평가해 켠다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network'); }));
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(false);
+    mockSubscription(true);
+    window.dispatchEvent(new Event('online'));
+    await tick();
+    expect(isSyncing()).toBe(true);
+  });
+
   it('결제 확정 통지(notifySubscriptionChanged)로 재평가한다', async () => {
     mockSubscription(false);
     dispose = initSyncController();
