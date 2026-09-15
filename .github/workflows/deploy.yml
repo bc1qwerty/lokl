@@ -5,6 +5,17 @@ on:
   # Deploys were tag-only, so a fix to the build itself could not ship without
   # inventing a release. This lets the same job be run on demand.
   workflow_dispatch:
+# ⚠2026-09-15: 배포가 겹칠 수 있었다. push 두 개가 연달아 들어오면 두 잡이 동시에
+#   돌고, **먼저 시작한 쪽이 나중에 끝나면** 라이브가 옛 산출물로 되돌아간다
+#   (릴리스 잡이라면 latest 태그가 역전된다). 러너 시간은 일정하지 않으므로 순서는
+#   보장되지 않는다.
+# ⚠`cancel-in-progress` 는 **false** 다. true 로 두면 돌던 배포·릴리스 업로드를
+#   중간에 죽여 부분 산출물을 남길 수 있다. false 로도 «나중 푸시가 나중에 끝남»은
+#   보장된다 — 대기열에는 최신 1건만 남는다.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
