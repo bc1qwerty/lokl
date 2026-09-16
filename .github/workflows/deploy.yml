@@ -30,6 +30,14 @@ jobs:
       - run: npm ci
       # Root build for lokl.txid.uk, which serves from the domain root.
       - run: npm run build
+
+      # ⚠ 2026-09-16 신설. 이 워크플로는 태그(v*)와 수동 dispatch 로만 도는데,
+      #   **태그는 CI 를 통과한 적 없는 커밋을 가리킬 수 있다.** ci.yml 이 테스트 15개를
+      #   돌지만 그건 main·feature push 와 PR 에서만이고, 배포 경로에는 게이트가
+      #   `npm run build`(tsc --noEmit + vite build) 하나뿐이었다 — 타입은 보지만
+      #   동작은 안 본다. 라이브 사이트로 나가는 길에는 ci 와 같은 게이트를 둔다.
+      #   ⚠순서는 ci.yml 과 맞춘다(build → test). 타입 오류가 더 빨리 드러난다.
+      - run: npm run test
       - name: Sync dist to VPS (lokl.txid.uk)
         env:
           SSH_KEY: ${{ secrets.ORACLE_VPS_SSH_KEY }}
@@ -75,6 +83,10 @@ jobs:
       # https://bc1qwerty.github.io 를 추가해야 한다(그 origin 은 다른 Pages
       # 프로젝트와 공유되니 credentials 허용 범위 확대를 감수할 때만).
       - name: Publish redirect stub to GitHub Pages (mirror retired)
+        # ⚠시크릿을 run 스크립트에 직접 보간하지 않고 env 로 넘긴다. GITHUB_TOKEN 은
+        #   로그에서 마스킹되지만, 문자열 치환은 값에 따옴표가 섞이면 셸 문법이 된다.
+        env:
+          GH_PAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p gh-redirect
           cat > gh-redirect/index.html <<'HTML'
@@ -91,5 +103,5 @@ jobs:
           cp gh-redirect/index.html gh-redirect/404.html
           git config --global user.name "github-actions-bot"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git remote set-url origin "https://x-access-token:${GH_PAGES_TOKEN}@github.com/${{ github.repository }}.git"
           npx gh-pages -d gh-redirect --message "chore: keep mirror redirecting to lokl.txid.uk"
