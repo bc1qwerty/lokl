@@ -29,7 +29,7 @@ Browser-based, offline-first personal knowledge base. PWA with full-text search,
 npm run dev       # Vite dev server
 npm run build     # Type-check + production build
 npm run preview   # Preview production build
-npm run deploy    # Build + deploy to GitHub Pages
+git tag v1.2.3 && git push --tags   # 배포(GHA deploy.yml → VPS rsync). ⚠ `npm run deploy` 는 막아 뒀다 — 은퇴한 GitHub Pages 미러를 되살리며 리다이렉트 스텁을 덮어쓴다
 ```
 
 ## Deployment
