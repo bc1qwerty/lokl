@@ -8,7 +8,7 @@ const zh: Locale = {
     openButton: '打开文件夹',
     reopenButton: '重新打开',
     dragHint: '或将文件夹拖放到此处',
-    privacyNote: '文件永远不会离开你的设备。不会上传任何内容。',
+    privacyNote: '文件保存在你的设备上。除非你开启同步，否则不会上传任何内容。',
     features: { offline: '离线可用', wikilinks: '[[维基链接]] 和反向链接', search: '即时全文搜索', privacy: '100% 隐私 — 无需服务器' },
     unsupported: '你的浏览器支持有限。请使用 Chrome 或 Edge 获得最佳体验。',
   },

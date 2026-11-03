@@ -11,7 +11,7 @@ const ja: Locale = {
     openButton: 'フォルダを開く',
     reopenButton: '再度開く',
     dragHint: 'またはフォルダをここにドラッグ',
-    privacyNote: 'ファイルはデバイスから離れません。何もアップロードされません。',
+    privacyNote: 'ファイルはデバイスにのみ保存されます。同期をオンにしない限り、何もアップロードされません。',
     features: {
       offline: 'オフライン対応',
       wikilinks: '[[ウィキリンク]] & バックリンク',

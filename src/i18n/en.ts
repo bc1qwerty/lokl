@@ -9,7 +9,7 @@ export const en = {
     openButton: 'Open Folder',
     reopenButton: 'Reopen',
     dragHint: 'or drag a folder here',
-    privacyNote: 'Your files never leave your device. Nothing is uploaded.',
+    privacyNote: 'Your files stay on your device. Nothing is uploaded unless you turn on sync.',
     features: {
       offline: 'Works offline',
       wikilinks: '[[Wiki-links]] & backlinks',

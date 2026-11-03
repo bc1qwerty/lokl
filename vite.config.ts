@@ -22,7 +22,7 @@ export default defineConfig({
       manifest: {
         name: 'Lokl — Local Knowledge Base',
         short_name: 'Lokl',
-        description: 'Browser-based, offline-first personal knowledge base. Your files never leave your device.',
+        description: 'Browser-based, offline-first personal knowledge base. Your files stay on your device unless you turn on sync.',
         theme_color: '#0d1117',
         background_color: '#0d1117',
         display: 'standalone',

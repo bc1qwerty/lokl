@@ -8,7 +8,7 @@ const fr: Locale = {
     openButton: 'Ouvrir un dossier',
     reopenButton: 'Rouvrir',
     dragHint: 'ou glissez un dossier ici',
-    privacyNote: 'Vos fichiers ne quittent jamais votre appareil. Rien n\'est téléchargé.',
+    privacyNote: 'Vos fichiers restent sur votre appareil. Rien n\'est envoyé sauf si vous activez la synchronisation.',
     features: { offline: 'Fonctionne hors ligne', wikilinks: '[[Wiki-liens]] et rétroliens', search: 'Recherche instantanée', privacy: '100% privé — aucun serveur' },
     unsupported: 'Votre navigateur a un support limité. Utilisez Chrome ou Edge pour une meilleure expérience.',
   },

@@ -8,7 +8,7 @@ const de: Locale = {
     openButton: 'Ordner öffnen',
     reopenButton: 'Erneut öffnen',
     dragHint: 'oder ziehe einen Ordner hierher',
-    privacyNote: 'Deine Dateien verlassen niemals dein Gerät. Nichts wird hochgeladen.',
+    privacyNote: 'Deine Dateien bleiben auf deinem Gerät. Ohne aktivierte Synchronisierung wird nichts hochgeladen.',
     features: { offline: 'Funktioniert offline', wikilinks: '[[Wiki-Links]] & Rückverweise', search: 'Sofortige Volltextsuche', privacy: '100% privat — kein Server' },
     unsupported: 'Dein Browser hat eingeschränkte Unterstützung. Verwende Chrome oder Edge für das beste Erlebnis.',
   },

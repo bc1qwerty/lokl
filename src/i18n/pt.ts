@@ -8,7 +8,7 @@ const pt: Locale = {
     openButton: 'Abrir pasta',
     reopenButton: 'Reabrir',
     dragHint: 'ou arraste uma pasta aqui',
-    privacyNote: 'Seus arquivos nunca saem do seu dispositivo. Nada é enviado.',
+    privacyNote: 'Seus arquivos ficam no seu dispositivo. Nada é enviado, a menos que você ative a sincronização.',
     features: { offline: 'Funciona offline', wikilinks: '[[Wiki-links]] e backlinks', search: 'Busca instantânea', privacy: '100% privado — sem servidor' },
     unsupported: 'Seu navegador tem suporte limitado. Use Chrome ou Edge para a melhor experiência.',
   },

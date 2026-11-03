@@ -2,7 +2,7 @@
 
 **Browser-based, offline-first personal knowledge base.**
 
-Your files never leave your device. No server, no account, no sync fees.
+Your files stay on your device unless you turn on sync. No account needed; sync is an optional paid add-on.
 
 ## Features
 
@@ -22,7 +22,7 @@ Your files never leave your device. No server, no account, no sync fees.
 
 ## How It Works
 
-Lokl uses the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) to read and write files directly on your device. No data is ever uploaded to any server.
+Lokl uses the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) to read and write files directly on your device. Nothing is uploaded unless you sign in and turn on the optional paid sync, which replicates your notes to `api.txid.uk`.
 
 | | Obsidian | Notion | **Lokl** |
 |---|---|---|---|

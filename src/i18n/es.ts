@@ -8,7 +8,7 @@ const es: Locale = {
     openButton: 'Abrir carpeta',
     reopenButton: 'Reabrir',
     dragHint: 'o arrastra una carpeta aquí',
-    privacyNote: 'Tus archivos nunca salen de tu dispositivo. No se sube nada.',
+    privacyNote: 'Tus archivos se quedan en tu dispositivo. No se sube nada a menos que actives la sincronización.',
     features: { offline: 'Funciona sin conexión', wikilinks: '[[Wiki-links]] y backlinks', search: 'Búsqueda instantánea', privacy: '100% privado — sin servidor' },
     unsupported: 'Tu navegador tiene soporte limitado. Usa Chrome o Edge para la mejor experiencia.',
   },

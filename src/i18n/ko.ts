@@ -11,7 +11,7 @@ const ko: Locale = {
     openButton: '폴더 열기',
     reopenButton: '다시 열기',
     dragHint: '또는 폴더를 여기에 드래그',
-    privacyNote: '파일은 기기를 떠나지 않습니다. 아무것도 업로드되지 않습니다.',
+    privacyNote: '파일은 기기에만 저장됩니다. 동기화를 켜지 않으면 아무것도 업로드되지 않습니다.',
     features: {
       offline: '오프라인 작동',
       wikilinks: '[[위키링크]] & 백링크',

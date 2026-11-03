@@ -10,7 +10,7 @@
   <text x="248" y="240" font-family="Roboto, 'DejaVu Sans', sans-serif" font-size="96" font-weight="700" fill="#e6edf3">Lokl</text>
   <!-- tagline -->
   <text x="96" y="360" font-family="Roboto, 'DejaVu Sans', sans-serif" font-size="40" fill="#9da7b3">Browser-based, offline-first personal knowledge base</text>
-  <text x="96" y="420" font-family="Roboto, 'DejaVu Sans', sans-serif" font-size="40" fill="#f7931a">Your files never leave your device.</text>
+  <text x="96" y="420" font-family="Roboto, 'DejaVu Sans', sans-serif" font-size="40" fill="#f7931a">Your files stay on your device.</text>
   <!-- url footer -->
   <text x="96" y="540" font-family="Roboto, 'DejaVu Sans', sans-serif" font-size="30" fill="#58a6ff">lokl.txid.uk</text>
 </svg>
