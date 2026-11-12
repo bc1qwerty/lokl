@@ -56,19 +56,18 @@ export default defineConfig({
     outDir: 'dist',
     rollupOptions: {
       output: {
-        manualChunks: {
-          codemirror: [
-            '@codemirror/view',
-            '@codemirror/state',
-            '@codemirror/commands',
-            '@codemirror/language',
-            '@codemirror/lang-markdown',
-            '@codemirror/autocomplete',
-            '@codemirror/theme-one-dark',
-          ],
-          'codemirror-langs': ['@codemirror/language-data'],
-          marked: ['marked'],
-          minisearch: ['minisearch'],
+        // 함수 형태로 node_modules 경로만 본다. 객체 형태일 때는 Vite 의 preload 헬퍼가 codemirror-langs
+        // 묶음에 들어가, 메인이 그 묶음(→ codemirror)을 정적으로 끌어와 편집기를 지연 로딩해도 첫 화면이
+        // CodeMirror ~500KB 를 modulepreload 했다(2026-11-12).
+        manualChunks(id) {
+          // preload 헬퍼는 메인·편집기·언어 묶음이 함께 쓴다 — 따로 두지 않으면 codemirror-langs 에 들어간다.
+          if (id.includes('vite/preload-helper')) return 'preload-helper';
+          if (!id.includes('/node_modules/')) return undefined;
+          if (id.includes('/@codemirror/language-data/')) return 'codemirror-langs';
+          if (id.includes('/@codemirror/') || id.includes('/@lezer/') || id.includes('/crelt/') || id.includes('/style-mod/') || id.includes('/w3c-keyname/')) return 'codemirror';
+          if (id.includes('/marked/')) return 'marked';
+          if (id.includes('/minisearch/')) return 'minisearch';
+          return undefined;
         },
       },
     },

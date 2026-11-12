@@ -8,7 +8,7 @@
   --border-light: #21262d;
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
-  --text-muted: #6e7681;
+  --text-muted: #878f9a; /* 2026-11-12: #6e7681 은 --bg 위 4.1:1 — 세 배경 모두 4.5:1 이상인 가장 흐린 값 */
   --accent: #58a6ff;
   --accent-hover: #79b8ff;
   --accent-bg: rgba(88, 166, 255, 0.1);
@@ -37,7 +37,7 @@
   --border-light: #e6edf3;
   --text-primary: #1f2328;
   --text-secondary: #656d76;
-  --text-muted: #8b949e;
+  --text-muted: #646b74; /* 2026-11-12: #8b949e 는 흰 바탕 3.1:1 — 세 배경 모두 4.5:1 이상 */
   --accent: #0969da;
   --accent-hover: #0550ae;
   --accent-bg: rgba(9, 105, 218, 0.08);

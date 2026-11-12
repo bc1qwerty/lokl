@@ -82,7 +82,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
   }
 
   return (
-    <div
+    <main
       class={`welcome welcome-dropzone${dragover.value ? ' dragover' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -124,6 +124,6 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
         <div class="welcome-feature"><span class="welcome-feature-icon">&#128269;</span>{str.features.search}</div>
         <div class="welcome-feature"><span class="welcome-feature-icon">&#128274;</span>{str.features.privacy}</div>
       </div>
-    </div>
+    </main>
   );
 }

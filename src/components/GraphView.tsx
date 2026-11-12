@@ -78,7 +78,7 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
       nodeOrphan: isDark ? '#484f58' : '#afb8c1',
       edge: isDark ? 'rgba(88,166,255,0.3)' : 'rgba(9,105,218,0.3)',
       text: isDark ? '#c9d1d9' : '#1f2328',
-      textDim: isDark ? '#6e7681' : '#656d76',
+      textDim: isDark ? '#878f9a' : '#646b74', // tokens.css --text-muted 와 같은 값
     };
 
     // Camera

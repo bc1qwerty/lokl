@@ -18,7 +18,7 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { Toolbar } from './components/Toolbar';
 import { Sidebar } from './components/Sidebar';
 import { TabBar } from './components/TabBar';
-import { Editor } from './components/Editor';
+import { lazy, Suspense } from 'preact/compat';
 import { Preview } from './components/Preview';
 import { BacklinksPanel } from './components/BacklinksPanel';
 import { TagsPanel } from './components/TagsPanel';
@@ -29,6 +29,10 @@ import { GraphView } from './components/GraphView';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ToastContainer } from './components/Toast';
 import { toast } from './lib/toast';
+
+// 편집기(CodeMirror 묶음 ~180KB)는 파일을 처음 열 때 받는다 — 정적 import 일 때는 파일을 열기 전 환영
+// 화면에서도 받았다(2026-11-12, 첫 로딩의 쓰지 않는 JS ~200KB).
+const Editor = lazy(() => import('./components/Editor').then((m) => ({ default: m.Editor })));
 
 export function App() {
   const saveStatus = useSignal<'clean' | 'dirty' | 'saving' | 'saved'>('clean');
@@ -340,14 +344,14 @@ export function App() {
   // loss and invite a re-import onto a broken DB.
   if (dbError.value) {
     return (
-      <div class="welcome">
+      <main class="welcome">
         <div class="welcome-logo">Lokl</div>
         <p class="welcome-tagline">Storage unavailable: {dbError.value}</p>
         <p class="welcome-tagline">
           Your notes were not deleted — the browser could not open local storage.
           Reload to retry; private browsing can block IndexedDB.
         </p>
-      </div>
+      </main>
     );
   }
 
@@ -371,11 +375,15 @@ export function App() {
         <LoginPanel />
       </Sidebar>
 
-      <div class="main-content">
+      <main class="main-content">
         <div style="display:flex; flex-direction:column; flex:1; min-width:0; overflow:hidden">
           <TabBar onTabClick={handleTabClick} />
           <div style="display:flex; flex:1; overflow:hidden">
-            {(mode === 'edit' || mode === 'split') && <Editor />}
+            {(mode === 'edit' || mode === 'split') && (
+              <Suspense fallback={null}>
+                <Editor />
+              </Suspense>
+            )}
             {(mode === 'preview' || mode === 'split') && <Preview onNavigate={handleNavigate} />}
             {!currentFilePath.value && (
               <div style="flex:1; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:14px">
@@ -384,7 +392,7 @@ export function App() {
             )}
           </div>
         </div>
-      </div>
+      </main>
 
       <div class="backlinks-panel-wrapper" style={backlinksOpen.value ? '' : 'width:0;overflow:hidden'}>
         <BacklinksPanel onNavigate={handleNavigate} />
