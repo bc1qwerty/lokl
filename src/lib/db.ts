@@ -313,9 +313,12 @@ export async function atomicRename(oldPath: string, newPath: string): Promise<vo
   // Phase 1: copy to new path.
   await putNote(newPath, source.content, { createdAt: source.createdAt });
 
-  // Phase 2: delete (trash) old path. On failure, roll back by purging the new copy.
+  // Phase 2: remove the old id. A rename is not a delete, so it must not leave a 30-day trash
+  // entry behind — the content lives on under the new name. The PouchDB tombstone replicates
+  // like any deletion; if a sync peer edited the old id meanwhile, its live revision wins and
+  // the note simply reappears there. On failure, roll back by purging the new copy.
   try {
-    await deleteNote(oldPath);
+    await purgeNote(oldPath);
   } catch (e) {
     try { await purgeNote(newPath); } catch { /* best-effort rollback */ }
     throw e;

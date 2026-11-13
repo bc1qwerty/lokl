@@ -262,13 +262,24 @@ describe('overwrite safety', () => {
     expect(trash[0]._id).not.toBe('todo.md');
   });
 
-  it('renaming back onto a trashed name keeps the trash copy', async () => {
+  it('rename leaves nothing in the trash, and the old name can be reused', async () => {
     await putNote('a.md', 'v1');
     await atomicRename('a.md', 'b.md');
+    expect(await listTrash()).toEqual([]);
     await putNote('b.md', 'v2');
     await atomicRename('b.md', 'a.md');
     expect((await getNote('a.md'))?.content).toBe('v2');
-    expect((await listTrash()).map(t => t.content).sort()).toEqual(['v1', 'v2']);
+    expect(await getNote('b.md')).toBeNull();
+    expect(await listTrash()).toEqual([]);
+  });
+
+  it('renaming onto a name that sits in the trash keeps the trash copy', async () => {
+    await putNote('a.md', 'old');
+    await deleteNote('a.md');
+    await putNote('b.md', 'new');
+    await atomicRename('b.md', 'a.md');
+    expect((await getNote('a.md'))?.content).toBe('new');
+    expect((await listTrash()).map(t => t.content)).toEqual(['old']);
   });
 
   it('rename keeps createdAt', async () => {
