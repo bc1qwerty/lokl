@@ -34,6 +34,39 @@ describe('backup.exportJSON / importJSON', () => {
     expect(sibling!.content).toBe('original');
   });
 
+  it('two devices importing the same backup keep the very same copy (same id, same revision)', async () => {
+    const copyOf = async () => {
+      const raw = await getDB().allDocs({ include_docs: true });
+      const d = raw.rows.map(r => r.doc as any).find(x => x?.conflictOf === 'a.md');
+      return { id: d._id as string, rev: d._rev as string };
+    };
+    await putNote('a.md', 'original');
+    const blob = await exportJSON();
+    await putNote('a.md', 'device one edit');
+    await importJSON(blob);
+    const one = await copyOf();
+
+    setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>);
+    await putNote('a.md', 'device two edit, different');
+    await importJSON(blob);
+    const two = await copyOf();
+
+    expect(one.id).toMatch(/^a \(conflict-import-[0-9a-f]{16}\)\.md$/);
+    expect(two).toEqual(one);
+  });
+
+  it('never writes over a copy the user has since edited', async () => {
+    await putNote('a.md', 'original');
+    const blob = await exportJSON();
+    await putNote('a.md', 'newer');
+    await importJSON(blob);
+    const raw = await getDB().allDocs({ include_docs: true });
+    const copy = raw.rows.map(r => r.doc as any).find(x => x?.conflictOf === 'a.md');
+    await getDB().put({ ...copy, content: 'my notes on the old version' });
+    expect(await importJSON(blob)).toEqual({ imported: 0, conflicts: 0 });
+    expect((await getDB().get(copy._id)).content).toBe('my notes on the old version');
+  });
+
   it('skips import when content is identical (no false conflicts)', async () => {
     await putNote('a.md', 'same');
     const blob = await exportJSON();

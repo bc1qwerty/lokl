@@ -2,6 +2,7 @@ import { useRef, useEffect } from 'preact/hooks';
 import { wikilinksIndex, allFilePaths, currentFilePath, graphOpen } from '../lib/store';
 import { t } from '../i18n';
 import { theme } from '../lib/theme';
+import { useDialog } from '../lib/dialog';
 
 interface Node {
   id: string;
@@ -20,6 +21,8 @@ interface Edge {
 
 export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef);
   const str = t.value.graph;
 
   useEffect(() => {
@@ -331,10 +334,10 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
 
   return (
     <div class="graph-overlay">
-      <div class="graph-container">
+      <div class="graph-container" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.title}>
         <div class="graph-header">
           <span>{str.title}</span>
-          <button class="toolbar-btn" onClick={() => { graphOpen.value = false; }}>×</button>
+          <button class="toolbar-btn" aria-label="Close" title="Close" onClick={() => { graphOpen.value = false; }}>×</button>
         </div>
         <canvas ref={canvasRef} class="graph-canvas" />
       </div>

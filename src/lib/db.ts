@@ -343,6 +343,7 @@ export function buildFileTree(notes: NoteDoc[]): FileEntry[] {
       name: parts[parts.length - 1],
       path: note._id,
       kind: 'file',
+      modified: note.updatedAt,
     });
   }
 

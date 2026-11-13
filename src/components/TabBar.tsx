@@ -11,7 +11,7 @@ export function TabBar({ onTabClick, onTabClose }: Props) {
   if (tabs.length === 0) return null;
 
   return (
-    <div class="tab-bar">
+    <div class="tab-bar" role="tablist">
       {tabs.map((path) => {
         const name = path.split('/').pop()?.replace(/\.md$/, '') || path;
         const isActive = currentFilePath.value === path;
@@ -19,7 +19,15 @@ export function TabBar({ onTabClick, onTabClose }: Props) {
           <div
             key={path}
             class={`tab-item${isActive ? ' active' : ''}`}
+            role="tab"
+            tabIndex={0}
+            aria-selected={isActive}
             onClick={() => onTabClick(path)}
+            onKeyDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTabClick(path); }
+              else if (e.key === 'Delete') { e.preventDefault(); onTabClose(path); }
+            }}
             title={path}
           >
             <span class="tab-name">{name}</span>
@@ -30,6 +38,7 @@ export function TabBar({ onTabClick, onTabClose }: Props) {
                 onTabClose(path);
               }}
               title={t.value.tabs.close}
+              aria-label={`${t.value.tabs.close}: ${name}`}
             >
               ×
             </button>

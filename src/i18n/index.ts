@@ -28,6 +28,9 @@ export const currentLang = signal(
   localStorage.getItem('lokl-lang') || 'en'
 );
 
+// index.html says lang="en"; a saved language has to reach <html> on load too, not only when it is changed.
+if (typeof document !== 'undefined' && locales[currentLang.value]) document.documentElement.lang = currentLang.value;
+
 export const t = computed(() => locales[currentLang.value] || en);
 
 export function setLang(lang: string) {

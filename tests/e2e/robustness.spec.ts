@@ -11,7 +11,8 @@ async function freshStart(page: Page) {
   await resetStorage(page);
   await page.reload();
   await page.getByRole('button', { name: 'Start fresh' }).click();
-  await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+  // (the toolbar, not the sidebar: on a phone-sized window the sidebar starts as a closed drawer)
+  await expect(page.locator('.toolbar')).toBeVisible({ timeout: 10_000 });
 }
 
 async function newFile(page: Page, name: string) {

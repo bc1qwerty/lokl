@@ -52,4 +52,29 @@ describe('conflict resolve pass', () => {
     await resolveAllConflicts();
     expect(calls.length).toBeLessThanOrEqual(6);
   });
+
+  it('says so once when conflicts are left unresolved, and again only after a clean pass', async () => {
+    const { toasts } = await import('../../src/lib/toast');
+    const warnings = () => toasts.value.filter((t) => t.level === 'warning' && /could not be resolved/.test(t.message)).length;
+    pendingConflicts = [[]];
+    await resolveAllConflicts();        // start from a clean stretch (the test above left one open)
+    toasts.value = [];
+    const stuck = () => {
+      pendingConflicts = Array.from({ length: 50 }, () => ['stuck.md']);
+      failures = { 'stuck.md': { status: 409, times: 1000 } };
+    };
+    stuck();
+    await resolveAllConflicts();
+    expect(warnings()).toBe(1);
+    stuck();
+    await resolveAllConflicts();
+    expect(warnings()).toBe(1);        // still the same stretch — no second toast
+
+    pendingConflicts = [[]];
+    failures = {};
+    await resolveAllConflicts();        // a clean pass ends the stretch
+    stuck();
+    await resolveAllConflicts();
+    expect(warnings()).toBe(2);
+  });
 });

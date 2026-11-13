@@ -1,4 +1,5 @@
 import { getDB, getNote } from './db';
+import { contentHash } from './note-path';
 import type { NoteDoc } from './db';
 
 // Raw existence check that includes trashed/deleted docs — getNote()
@@ -57,7 +58,7 @@ export async function exportZIP(): Promise<Blob> {
 
 /**
  * Import a JSON backup. On id collision, the imported note is kept as a sibling
- * `${base} (conflict-${ts}-${rand}).md` with `conflictOf: id`.
+ * `${base} (conflict-import-<content hash>).md` with `conflictOf: id`.
  * Returns counts of new imports vs collision-siblings.
  */
 export async function importJSON(blob: Blob): Promise<{ imported: number; conflicts: number }> {
@@ -105,12 +106,14 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
     // Collision: keep both. The sibling inherits the payload's metadata
     // (tags, trashed flag, etc.) but lives at a new id and points back
     // at the original via conflictOf.
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const rand = Math.random().toString(36).slice(2, 8);
+    // The copy's id comes from the text alone (as in the folder import): two devices importing the
+    // same backup then write the same document instead of one copy each.
     const base = note._id.replace(/\.md$/, '');
-    const siblingId = `${base} (conflict-${ts}-${rand}).md`;
-    await getDB().put({ ...payloadDoc, _id: siblingId, conflictOf: note._id });
+    const siblingId = `${base} (conflict-import-${contentHash(note.content)}).md`;
     alreadyKept.add(`${note._id}\u0000${note.content}`);
+    // Already there (kept by an earlier run or another device, or since edited or binned): leave it.
+    if (await rawExists(siblingId)) continue;
+    await getDB().put({ ...payloadDoc, _id: siblingId, conflictOf: note._id });
     conflicts++;
   }
   return { imported, conflicts };

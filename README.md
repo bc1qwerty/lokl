@@ -60,6 +60,10 @@ npm run dev
 | `Cmd/Ctrl + \` | Toggle sidebar |
 | `Cmd/Ctrl + =/-` | Increase/decrease font size |
 | `Esc` | Close dialog |
+| `Enter` on a note in the tree | Open it |
+| `Shift + F10` / Menu key on a note | Rename, duplicate, copy path, delete |
+
+On windows narrower than 720px (a phone) the sidebar and the backlinks panel open as drawers over the note.
 
 ## Browser Support
 

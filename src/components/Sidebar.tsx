@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { t } from '../i18n';
-import { vault, fileTree, searchOpen } from '../lib/store';
+import { vault, fileTree, searchOpen, settings, sortTree } from '../lib/store';
 import { FileTree } from './FileTree';
 import { ConflictPanel } from './ConflictPanel';
 import { TrashPanel } from './TrashPanel';
@@ -23,6 +23,7 @@ export function Sidebar({ onFileClick, onNewFile, children }: Props) {
           <button
             class="sidebar-action-btn"
             title={str.newFile}
+            aria-label={str.newFile}
             onClick={onNewFile}
           >+</button>
         </div>
@@ -33,14 +34,16 @@ export function Sidebar({ onFileClick, onNewFile, children }: Props) {
           class="sidebar-search-input"
           type="text"
           placeholder={str.search}
+          aria-label={str.search}
           readOnly
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); searchOpen.value = true; } }}
           onClick={() => { searchOpen.value = true; }}
         />
       </div>
 
-      <div class="file-tree">
+      <div class="file-tree" role="tree" aria-label={str.files}>
         {fileTree.value.length > 0 ? (
-          <FileTree entries={fileTree.value} onFileClick={onFileClick} />
+          <FileTree entries={sortTree(fileTree.value, settings.value.sortBy)} onFileClick={onFileClick} />
         ) : (
           <div style="padding: 16px 12px; font-size: 12px; color: var(--text-muted)">
             {str.noFiles}

@@ -10,6 +10,8 @@ import { settleOpenNote } from '../lib/autosave';
 import { isNativeSupported } from '../lib/fs';
 import { importFromFSAA, announceImport } from '../lib/migrate';
 import { useSignal } from '@preact/signals';
+import { useRef } from 'preact/hooks';
+import { useDialog } from '../lib/dialog';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -26,6 +28,21 @@ export function SettingsPanel() {
   const str = t.value.settings;
   const s = settings.value;
   const folderImport = useSignal('');   // progress text while a folder import runs
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef);
+
+  // A failed export (the zip chunk not arriving, storage refusing to read) used to end without a word.
+  async function exportAs(kind: 'json' | 'zip') {
+    try {
+      // Land what is still in the editor first — the last second of typing was missing from backups.
+      await settleOpenNote();
+      const blob = kind === 'json' ? await exportJSON() : await exportZIP();
+      download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.${kind}`);
+    } catch (err: any) {
+      console.error('Export failed:', err);
+      toast.error(`Export failed: ${err?.message ?? 'unknown error'}`);
+    }
+  }
 
   // Also the way to finish an import that was interrupted: notes already in the
   // vault are skipped, differing ones are kept as conflict copies.
@@ -48,41 +65,45 @@ export function SettingsPanel() {
     <div class="search-overlay" onClick={(e) => {
       if ((e.target as HTMLElement).classList.contains('search-overlay')) settingsOpen.value = false;
     }}>
-      <div class="settings-dialog">
+      <div class="settings-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.title}>
         <div class="settings-header">
           <h3>{str.title}</h3>
-          <button class="toolbar-btn" onClick={() => { settingsOpen.value = false; }}>×</button>
+          <button class="toolbar-btn" aria-label="Close" title="Close" onClick={() => { settingsOpen.value = false; }}>×</button>
         </div>
 
         <div class="settings-body">
           <div class="settings-row">
-            <label>{str.fontSize}</label>
-            <div class="settings-control">
-              <button class="btn-secondary" onClick={() => updateSettings({ fontSize: Math.max(10, s.fontSize - 1) })}>-</button>
+            <span class="settings-label" id="set-font">{str.fontSize}</span>
+            <div class="settings-control" role="group" aria-labelledby="set-font">
+              <button class="btn-secondary" aria-label={`${str.fontSize} −`} onClick={() => updateSettings({ fontSize: Math.max(10, s.fontSize - 1) })}>-</button>
               <span class="settings-value">{s.fontSize}px</span>
-              <button class="btn-secondary" onClick={() => updateSettings({ fontSize: Math.min(24, s.fontSize + 1) })}>+</button>
+              <button class="btn-secondary" aria-label={`${str.fontSize} +`} onClick={() => updateSettings({ fontSize: Math.min(24, s.fontSize + 1) })}>+</button>
             </div>
           </div>
 
           <div class="settings-row">
-            <label>{str.sortBy}</label>
-            <div class="settings-control">
+            <span class="settings-label" id="set-sort">{str.sortBy}</span>
+            <div class="settings-control" role="group" aria-labelledby="set-sort">
               <button
                 class={`btn-secondary${s.sortBy === 'name' ? ' active' : ''}`}
+                aria-pressed={s.sortBy === 'name'}
                 onClick={() => updateSettings({ sortBy: 'name' })}
               >{str.sortName}</button>
               <button
                 class={`btn-secondary${s.sortBy === 'modified' ? ' active' : ''}`}
+                aria-pressed={s.sortBy === 'modified'}
                 onClick={() => updateSettings({ sortBy: 'modified' })}
               >{str.sortModified}</button>
             </div>
           </div>
 
           <div class="settings-row">
-            <label>{str.lineNumbers}</label>
+            <span class="settings-label" id="set-lines">{str.lineNumbers}</span>
             <div class="settings-control">
               <button
                 class={`btn-secondary toggle${s.editorLineNumbers ? ' active' : ''}`}
+                aria-labelledby="set-lines"
+                aria-pressed={s.editorLineNumbers}
                 onClick={() => updateSettings({ editorLineNumbers: !s.editorLineNumbers })}
               >
                 {s.editorLineNumbers ? 'ON' : 'OFF'}
@@ -91,9 +112,10 @@ export function SettingsPanel() {
           </div>
 
           <div class="settings-row">
-            <label>{str.language}</label>
+            <label for="set-lang">{str.language}</label>
             <div class="settings-control">
               <select
+                id="set-lang"
                 class="settings-select"
                 value={currentLang.value}
                 onChange={(e) => setLang((e.target as HTMLSelectElement).value)}
@@ -108,8 +130,8 @@ export function SettingsPanel() {
           <div class="settings-divider" style="border-top:1px solid var(--border); margin:12px 0" />
 
           <div class="settings-row">
-            <label>Account</label>
-            <div class="settings-control" style="flex-direction:column; align-items:flex-end; gap:4px">
+            <span class="settings-label" id="set-account">Account</span>
+            <div class="settings-control" role="group" aria-labelledby="set-account" style="flex-direction:column; align-items:flex-end; gap:4px">
               {authState.value.status === 'authenticated' ? (
                 <>
                   <span style="font-size:12px; color:var(--text-primary)">
@@ -126,7 +148,7 @@ export function SettingsPanel() {
           </div>
 
           <div class="settings-row" style="flex-direction:column; align-items:stretch">
-            <label>Sync</label>
+            <span class="settings-label">Sync</span>
             {authState.value.status === 'authenticated' ? (
               <>
                 <SubscriptionPanel />
@@ -157,20 +179,11 @@ export function SettingsPanel() {
           <div class="settings-divider" style="border-top:1px solid var(--border); margin:12px 0" />
 
           <div class="settings-row" style="flex-direction:column; align-items:stretch; gap:6px">
-            <label style="font-size:13px; color:var(--text-secondary); margin-bottom:4px">{str.data.title}</label>
+            <span class="settings-label" style="font-size:13px; color:var(--text-secondary); margin-bottom:4px">{str.data.title}</span>
 
-            <button class="btn-secondary" onClick={async () => {
-              // Land what is still in the editor first — the last second of typing was missing from backups.
-              await settleOpenNote();
-              const blob = await exportJSON();
-              download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.json`);
-            }}>{str.data.exportJson}</button>
+            <button class="btn-secondary" onClick={() => exportAs('json')}>{str.data.exportJson}</button>
 
-            <button class="btn-secondary" onClick={async () => {
-              await settleOpenNote();
-              const blob = await exportZIP();
-              download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.zip`);
-            }}>{str.data.exportZip}</button>
+            <button class="btn-secondary" onClick={() => exportAs('zip')}>{str.data.exportZip}</button>
 
             <label class="settings-import-label">
               {str.data.importJson}

@@ -5,6 +5,8 @@ import { toast } from './toast';
 
 let conflictResolverRunning = false;
 let conflictResolverPending = false;
+// One warning per stretch of unresolved conflicts, not one per sync change.
+let unresolvedWarned = false;
 
 export async function resolveAllConflicts(): Promise<void> {
   if (conflictResolverRunning) {
@@ -16,6 +18,7 @@ export async function resolveAllConflicts(): Promise<void> {
     // A branch that keeps answering 404/409 must not spin this loop forever; the next
     // change event starts a fresh pass anyway.
     let contested = 0;
+    let gaveUp = false;
     do {
       conflictResolverPending = false;
       const conflicts = await listConflicts();
@@ -25,11 +28,22 @@ export async function resolveAllConflicts(): Promise<void> {
         try {
           await resolveConflict(c._id);
         } catch (e: any) {
-          if (e?.status === 404 || e?.status === 409) { if (++contested <= 5) conflictResolverPending = true; }
-          else console.error('Conflict resolve failed:', c._id, e);
+          if (e?.status === 404 || e?.status === 409) { if (++contested <= 5) conflictResolverPending = true; else gaveUp = true; }
+          else { gaveUp = true; console.error('Conflict resolve failed:', c._id, e); }
         }
       }
     } while (conflictResolverPending);
+    // What could not be settled stays in the database as a hidden losing revision — nothing in the
+    // tree or the conflict panel shows it. Say so once; the next sync change or app start retries.
+    if (gaveUp) {
+      const left = await listConflicts().catch(() => []);
+      if (left.length > 0 && !unresolvedWarned) {
+        unresolvedWarned = true;
+        toast.warning(`${left.length} sync conflict${left.length === 1 ? '' : 's'} could not be resolved yet — the other version is kept and will be retried.`);
+      }
+    } else {
+      unresolvedWarned = false;
+    }
   } finally {
     conflictResolverRunning = false;
   }
@@ -137,6 +151,9 @@ export function startSync(): void {
     }) as unknown as PouchDB.Replication.Sync<NoteDoc>;
   syncHandler = handler;
   watchDirections(handler);
+  // Conflicts left by an earlier session (tab closed right after a pull, the retry cap) were only
+  // looked at again on the next sync change — which may never come.
+  resolveAllConflicts().catch(err => console.error('Conflict resolve failed:', err));
 }
 
 export function stopSync(): void {

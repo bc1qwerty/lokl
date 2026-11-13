@@ -1,8 +1,9 @@
-import { useRef, useEffect } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { search } from '../lib/search';
 import { searchOpen } from '../lib/store';
 import { t } from '../i18n';
+import { useDialog, useSelectedInView } from '../lib/dialog';
 
 interface Props {
   onSelect: (path: string) => void;
@@ -15,9 +16,11 @@ export function SearchDialog({ onSelect }: Props) {
   const results = useSignal<any[]>([]);
   const str = t.value.search;
 
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef);
+  // arrow keys used to move the selection out of sight (13 of 20 results were chosen blind)
+  useSelectedInView(listRef, selectedIdx.value);
 
   function handleInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -42,6 +45,7 @@ export function SearchDialog({ onSelect }: Props) {
         onSelect(item.path);
       }
     } else if (e.key === 'Escape') {
+      e.stopPropagation();
       searchOpen.value = false;
     }
   }
@@ -54,7 +58,7 @@ export function SearchDialog({ onSelect }: Props) {
 
   return (
     <div class="search-overlay" onClick={handleOverlayClick}>
-      <div class="search-dialog">
+      <div class="search-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.placeholder}>
         <div class="search-input-wrapper">
           <span class="search-icon">&#128269;</span>
           <input
@@ -62,13 +66,15 @@ export function SearchDialog({ onSelect }: Props) {
             class="search-input"
             type="text"
             placeholder={str.placeholder}
+            aria-label={str.placeholder}
+            data-autofocus
             value={query.value}
             onInput={handleInput}
             onKeyDown={handleKeyDown}
           />
           <span class="search-kbd">ESC</span>
         </div>
-        <div class="search-results">
+        <div class="search-results" ref={listRef}>
           {query.value && results.value.length === 0 && (
             <div class="search-empty">{str.noResults}</div>
           )}

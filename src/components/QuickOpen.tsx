@@ -1,7 +1,8 @@
-import { useRef, useEffect } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
 import { useSignal } from '@preact/signals';
 import { allFilePaths, quickOpenOpen } from '../lib/store';
 import { t } from '../i18n';
+import { useDialog, useSelectedInView } from '../lib/dialog';
 
 interface Props {
   onSelect: (path: string) => void;
@@ -13,7 +14,10 @@ export function QuickOpen({ onSelect }: Props) {
   const selectedIdx = useSignal(0);
   const str = t.value.quickOpen;
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useDialog(dialogRef);
+  useSelectedInView(listRef, selectedIdx.value);
 
   const filtered = (() => {
     const q = query.value.toLowerCase();
@@ -38,6 +42,7 @@ export function QuickOpen({ onSelect }: Props) {
         onSelect(item);
       }
     } else if (e.key === 'Escape') {
+      e.stopPropagation();
       quickOpenOpen.value = false;
     }
   }
@@ -46,7 +51,7 @@ export function QuickOpen({ onSelect }: Props) {
     <div class="search-overlay" onClick={(e) => {
       if ((e.target as HTMLElement).classList.contains('search-overlay')) quickOpenOpen.value = false;
     }}>
-      <div class="search-dialog">
+      <div class="search-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.placeholder}>
         <div class="search-input-wrapper">
           <span class="search-icon">&#128196;</span>
           <input
@@ -54,6 +59,8 @@ export function QuickOpen({ onSelect }: Props) {
             class="search-input"
             type="text"
             placeholder={str.placeholder}
+            aria-label={str.placeholder}
+            data-autofocus
             value={query.value}
             onInput={(e) => {
               query.value = (e.target as HTMLInputElement).value;
@@ -63,7 +70,7 @@ export function QuickOpen({ onSelect }: Props) {
           />
           <span class="search-kbd">ESC</span>
         </div>
-        <div class="search-results">
+        <div class="search-results" ref={listRef}>
           {filtered.length === 0 && (
             <div class="search-empty">{str.noResults}</div>
           )}

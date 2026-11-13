@@ -1,6 +1,6 @@
 import { putNote, listNotes, getDB } from './db';
 import type { NoteDoc } from './db';
-import { safeNoteId } from './note-path';
+import { safeNoteId, contentHash } from './note-path';
 import { toast, dismiss } from './toast';
 
 const TMP_SUFFIX = '.lokl-tmp';
@@ -221,18 +221,6 @@ async function importFiles(
 // Fixed so the copy is byte-identical wherever it is written (see above).
 const IMPORT_COPY_STAMP = '1970-01-01T00:00:00.000Z';
 
-// cyrb53 — a short, stable, non-cryptographic hash; only has to tell texts apart within one note's copies.
-function contentHash(text: string): string {
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
-}
 
 async function rawGet(id: string): Promise<NoteDoc | null> {
   try {

@@ -3,6 +3,8 @@ export interface FileEntry {
   path: string;
   kind: 'file' | 'directory';
   children?: FileEntry[];
+  /** ISO time of the last edit (files only). */
+  modified?: string;
 }
 
 export interface SearchResult {

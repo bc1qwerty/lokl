@@ -1,5 +1,6 @@
 import { signal, useSignal } from '@preact/signals';
-import { useCallback, useEffect } from 'preact/hooks';
+import { useCallback, useEffect, useRef } from 'preact/hooks';
+import { useDialog } from './lib/dialog';
 import {
   vault, fileTree, currentFilePath, openTabs,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
@@ -16,6 +17,8 @@ import { interruptedImport, clearInterruptedImport, rememberInterruptedToast } f
 
 import { startQuotaMonitor } from './lib/quota';
 import { initSyncController } from './lib/sync-controller';
+import { resolveAllConflicts } from './lib/sync';
+import { isNarrow, toggleSidebar } from './lib/store';
 import { LoginPanel } from './components/LoginPanel';
 import { QuotaBanner } from './components/QuotaBanner';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -58,6 +61,38 @@ function loadEditor() {
 let Editor = loadEditor();
 function retryEditor() { Editor = loadEditor(); editorAttempt.value++; }
 
+interface NameDialogProps {
+  title: string; placeholder: string; confirm: string; value: string; select?: boolean;
+  onInput: (v: string) => void; onConfirm: () => void; onClose: () => void;
+}
+
+// New File / Rename. Focus is moved in by useDialog: the `autofocus` attribute only works for the
+// first dialog of a page load, so the "+" button kept the focus and typing went nowhere — or, opened
+// by Ctrl+N from the editor, straight into the open note.
+function NameDialog({ title, placeholder, confirm, value, select, onInput, onConfirm, onClose }: NameDialogProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialog(ref, { select });
+  return (
+    <div class="new-file-overlay" onClick={(e) => {
+      if ((e.target as HTMLElement).classList.contains('new-file-overlay')) onClose();
+    }}>
+      <div class="new-file-dialog" ref={ref} role="dialog" aria-modal="true" aria-label={title}>
+        <h3>{title}</h3>
+        <input class="new-file-input" type="text" placeholder={placeholder} aria-label={title}
+          data-autofocus
+          value={value}
+          onInput={(e) => onInput((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(); if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
+        />
+        <div class="new-file-actions">
+          <button class="btn-secondary" onClick={onClose}>Cancel</button>
+          <button class="btn-primary" onClick={onConfirm}>{confirm}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const newFileOpen = useSignal(false);
   const newFileName = useSignal('');
@@ -87,6 +122,8 @@ export function App() {
     getDB().info().then((info) => {
       if (info.doc_count > 0) {
         loadNotes();
+        // Losing revisions a previous session did not get to (sync off since, tab closed mid-pull).
+        resolveAllConflicts().catch((e) => console.error('Conflict resolve failed:', e));
       } else {
         // Empty DB: show WelcomeScreen (vault stays null)
         vault.value = null;
@@ -183,6 +220,8 @@ export function App() {
       showNote(path, note.content, note._rev);
       addTab(path);
       saveStatus.value = 'clean';
+      // on a phone the sidebar is a drawer over the note that was just opened
+      if (isNarrow()) sidebarOpen.value = false;
     } catch (e) {
       console.error('Failed to read file:', e);
     }
@@ -371,7 +410,7 @@ export function App() {
         e.preventDefault();
         void flushPendingSave();
       }
-      if (mod && e.key === '\\') { e.preventDefault(); sidebarOpen.value = !sidebarOpen.value; }
+      if (mod && e.key === '\\') { e.preventDefault(); toggleSidebar(); }
       // Font size: Cmd+= / Cmd+-
       if (mod && (e.key === '=' || e.key === '+')) {
         e.preventDefault();
@@ -487,43 +526,23 @@ export function App() {
       {graphOpen.value && <GraphView onNavigate={handleNavigate} />}
 
       {newFileOpen.value && (
-        <div class="new-file-overlay" onClick={(e) => {
-          if ((e.target as HTMLElement).classList.contains('new-file-overlay')) newFileOpen.value = false;
-        }}>
-          <div class="new-file-dialog">
-            <h3>New File</h3>
-            <input class="new-file-input" type="text" placeholder="filename.md"
-              value={newFileName.value}
-              onInput={(e) => { newFileName.value = (e.target as HTMLInputElement).value; }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFile(); if (e.key === 'Escape') newFileOpen.value = false; }}
-              autoFocus
-            />
-            <div class="new-file-actions">
-              <button class="btn-secondary" onClick={() => { newFileOpen.value = false; }}>Cancel</button>
-              <button class="btn-primary" onClick={handleCreateFile}>Create</button>
-            </div>
-          </div>
-        </div>
+        <NameDialog
+          title="New File" placeholder="filename.md" confirm="Create"
+          value={newFileName.value}
+          onInput={(v) => { newFileName.value = v; }}
+          onConfirm={handleCreateFile}
+          onClose={() => { newFileOpen.value = false; }}
+        />
       )}
 
       {renameOpen.value && (
-        <div class="new-file-overlay" onClick={(e) => {
-          if ((e.target as HTMLElement).classList.contains('new-file-overlay')) renameOpen.value = false;
-        }}>
-          <div class="new-file-dialog">
-            <h3>Rename</h3>
-            <input class="new-file-input" type="text" placeholder="new name"
-              value={renameValue.value}
-              onInput={(e) => { renameValue.value = (e.target as HTMLInputElement).value; }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleDoRename(); if (e.key === 'Escape') renameOpen.value = false; }}
-              autoFocus
-            />
-            <div class="new-file-actions">
-              <button class="btn-secondary" onClick={() => { renameOpen.value = false; }}>Cancel</button>
-              <button class="btn-primary" onClick={handleDoRename}>Rename</button>
-            </div>
-          </div>
-        </div>
+        <NameDialog
+          title="Rename" placeholder="new name" confirm="Rename" select
+          value={renameValue.value}
+          onInput={(v) => { renameValue.value = v; }}
+          onConfirm={handleDoRename}
+          onClose={() => { renameOpen.value = false; }}
+        />
       )}
 
       <ToastContainer />
