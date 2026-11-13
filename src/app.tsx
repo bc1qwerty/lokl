@@ -1,4 +1,4 @@
-import { useSignal } from '@preact/signals';
+import { signal, useSignal } from '@preact/signals';
 import { useCallback, useEffect } from 'preact/hooks';
 import {
   vault, fileTree, currentFilePath, openTabs,
@@ -10,6 +10,8 @@ import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, 
 import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
+import { indexChange, refreshLinks } from './lib/reindex';
+import { normalizeNotePath } from './lib/note-path';
 
 import { startQuotaMonitor } from './lib/quota';
 import { initSyncController } from './lib/sync-controller';
@@ -33,7 +35,27 @@ import { toast } from './lib/toast';
 
 // 편집기(CodeMirror 묶음 ~180KB)는 파일을 처음 열 때 받는다 — 정적 import 일 때는 파일을 열기 전 환영
 // 화면에서도 받았다(2026-11-12, 첫 로딩의 쓰지 않는 JS ~200KB).
-const Editor = lazy(() => import('./components/Editor').then((m) => ({ default: m.Editor })));
+// 🔴 그 묶음을 못 받으면(첫 방문 직후 오프라인, 배포로 옛 해시 파일이 사라짐) lazy 가 던지고, 오류 경계가 없어
+//    화면 전체가 말없이 죽었다(본문 빈 화면, New File 도 안 열림). 실패는 안내 컴포넌트로 받아 앱은 살려 둔다.
+const editorAttempt = signal(0);
+function EditorLoadFailed() {
+  return (
+    <div class="editor-load-failed" role="alert" style="flex:1; display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; color:var(--text-muted); font-size:14px; padding:16px; text-align:center">
+      <span>The editor could not be loaded. Check your connection and try again — your notes are safe.</span>
+      <span style="display:flex; gap:8px">
+        <button class="btn-primary" onClick={retryEditor}>Retry</button>
+        <button class="btn-secondary" onClick={() => location.reload()}>Reload</button>
+      </span>
+    </div>
+  );
+}
+function loadEditor() {
+  return lazy(() => import('./components/Editor')
+    .then((m) => ({ default: m.Editor as () => any }))
+    .catch((e) => { console.error('Editor chunk failed to load:', e); return { default: EditorLoadFailed as () => any }; }));
+}
+let Editor = loadEditor();
+function retryEditor() { Editor = loadEditor(); editorAttempt.value++; }
 
 export function App() {
   const newFileOpen = useSignal(false);
@@ -92,7 +114,15 @@ export function App() {
 
   // PouchDB change feed (replaces 3s polling)
   useEffect(() => {
+    let linkTimer: ReturnType<typeof setTimeout> | undefined;
     const watcher = watchChanges((doc) => {
+      // Search, backlinks and tags follow the feed too — notes that came in by sync
+      // or import were in the tree but not findable until a reload.
+      indexChange(doc);
+      clearTimeout(linkTimer);
+      linkTimer = setTimeout(() => {
+        listNotes().then((notes) => { fileTree.value = buildFileTree(notes); refreshLinks(notes); }).catch(() => {});
+      }, 400);
       if (applyChange(doc) === 'closed') {
         removeFromIndex(doc._id);
         // The open note was removed elsewhere (another tab, another device):
@@ -105,7 +135,7 @@ export function App() {
         fileTree.value = buildFileTree(notes);
       });
     });
-    return () => watcher.cancel();
+    return () => { clearTimeout(linkTimer); watcher.cancel(); };
     // re-attach when the database handle is replaced (reopenDB)
   }, [dbEpoch.value]);
 
@@ -160,7 +190,10 @@ export function App() {
   const handleCreateFile = useCallback(async () => {
     const name = newFileName.value.trim();
     if (!name) return;
-    const path = name.endsWith('.md') ? name : `${name}.md`;
+    // "/lead", "trail/", "x/../y" used to become ids as typed; "_x" was refused by the database.
+    const path = normalizeNotePath(name);
+    if (!path) { toast.error(`"${name}" is not a usable note name.`); return; }
+    if (/^_/.test(name.replace(/^[\s/]+/, ''))) toast.info(`Names can't start with "_" — created as "${path}".`);
     try {
       // An existing note with this name is opened, never blanked.
       if (await getNote(path)) {
@@ -208,11 +241,13 @@ export function App() {
 
   const handleDoRename = useCallback(async () => {
     const oldPath = renameTarget.value;
-    let newName = renameValue.value.trim();
-    if (!newName) return;
-    if (!newName.endsWith('.md')) newName += '.md';
+    const typed = renameValue.value.trim();
+    if (!typed) return;
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
-    const newPath = dir + newName;
+    const newPath = normalizeNotePath(dir + typed);
+    if (!newPath) { toast.error(`"${typed}" is not a usable note name.`); return; }
+    if (newPath === oldPath) { renameOpen.value = false; return; }
+    if (!dir && typed.startsWith('_')) toast.info(`Names can't start with "_" — renamed to "${newPath}".`);
     // The old id's tombstone reaches the change feed while we are still here;
     // it must not close the editor under us.
     const done = expectLocalRemoval(oldPath);
@@ -362,7 +397,8 @@ export function App() {
 
   // Show welcome screen until PouchDB is initialized (vault set by loadNotes)
   if (!vault.value) {
-    return <WelcomeScreen onLoadComplete={loadNotes} />;
+    // The import outcome (skipped files, nothing found, a failure) is reported by toast — it must be visible here too.
+    return <><WelcomeScreen onLoadComplete={loadNotes} /><ToastContainer /></>;
   }
 
   const mode = viewMode.value;
@@ -388,7 +424,7 @@ export function App() {
                 to be saved, and that orphan text then blocked every attempt to open a note. */}
             {currentFilePath.value && (mode === 'edit' || mode === 'split') && (
               <Suspense fallback={null}>
-                <Editor />
+                <Editor key={editorAttempt.value} />
               </Suspense>
             )}
             {(mode === 'preview' || mode === 'split') && <Preview onNavigate={handleNavigate} />}

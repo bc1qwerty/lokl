@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflictSiblings, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflictSiblings, listConflicts, resolveConflict, restoreNote, purgeNote, purgeTrashed, restoreTrashed, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -153,6 +153,38 @@ describe('trash + sweeper', () => {
     await deleteNote('t.md');
     await purgeNote('t.md');
     await expect(getDB().get('t.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  // The trash panel's list can be seconds old: the note may have been restored
+  // (it is live again) or purged elsewhere since.
+  it('purgeTrashed refuses a note that was restored since the list was read', async () => {
+    await putNote('t.md', 'precious');
+    await deleteNote('t.md');
+    await restoreNote('t.md'); // another tab
+    expect(await purgeTrashed('t.md')).toBe('not-trashed');
+    expect((await getNote('t.md'))?.content).toBe('precious');
+  });
+
+  it('purgeTrashed and restoreTrashed report a note that is already gone instead of throwing', async () => {
+    await putNote('t.md', 'x');
+    await deleteNote('t.md');
+    await purgeNote('t.md'); // another tab
+    expect(await purgeTrashed('t.md')).toBe('gone');
+    expect(await restoreTrashed('t.md')).toBe('gone');
+    expect(await purgeTrashed('never-existed.md')).toBe('gone');
+  });
+
+  it('purgeTrashed removes real trash; restoreTrashed brings real trash back and leaves a live note alone', async () => {
+    await putNote('a.md', 'A');
+    await putNote('b.md', 'B');
+    await deleteNote('a.md');
+    await deleteNote('b.md');
+    expect(await purgeTrashed('a.md')).toBe('done');
+    await expect(getDB().get('a.md')).rejects.toMatchObject({ status: 404 });
+    expect(await restoreTrashed('b.md')).toBe('done');
+    const rev = (await getDB().get('b.md'))._rev;
+    expect(await restoreTrashed('b.md')).toBe('not-trashed');
+    expect((await getDB().get('b.md'))._rev).toBe(rev);
   });
 
   it('listTrash returns only trashed docs', async () => {

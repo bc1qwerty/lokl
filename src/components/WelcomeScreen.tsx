@@ -1,7 +1,8 @@
 import { useSignal } from '@preact/signals';
 import { t } from '../i18n';
 import { isNativeSupported } from '../lib/fs';
-import { importFromFSAA, markMigrated } from '../lib/migrate';
+import { importFromFSAA, describeImport, markMigrated } from '../lib/migrate';
+import { toast } from '../lib/toast';
 
 interface Props {
   onLoadComplete: () => Promise<void>;
@@ -13,22 +14,39 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
   const progress = useSignal('');
   const str = t.value.welcome;
 
+  // Shared by the picker and the drop path. The outcome is always shown: a partial
+  // import used to look complete, and a failed one left the screen without a word.
+  async function runImport(handle: FileSystemDirectoryHandle) {
+    progress.value = 'Importing files...';
+    const report = await importFromFSAA(handle, (current, total) => {
+      progress.value = `Importing ${current} / ${total}...`;
+    });
+    const summary = describeImport(report);
+    if (report.imported === 0) {
+      // Nothing came in — stay here instead of opening an empty vault as if it worked.
+      toast.error(report.skipped.length ? summary : 'No .md files found in that folder.');
+      progress.value = '';
+      return;
+    }
+    if (report.skipped.length) toast.error(summary);
+    else if (report.renamed.length) toast.warning(summary, { ttl: 20000 });
+    else toast.success(summary);
+    markMigrated();
+    progress.value = `Imported ${report.imported} files. Loading...`;
+    await onLoadComplete();
+  }
+
   async function handleImportFolder() {
     if (!isNativeSupported()) return;
     loading.value = true;
     progress.value = 'Selecting folder...';
     try {
       const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
-      progress.value = 'Importing files...';
-      const count = await importFromFSAA(handle, (current, total) => {
-        progress.value = `Importing ${current} / ${total}...`;
-      });
-      markMigrated();
-      progress.value = `Imported ${count} files. Loading...`;
-      await onLoadComplete();
+      await runImport(handle);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
         console.error('Import failed:', e);
+        toast.error(`Import failed: ${(e as Error)?.message ?? 'unknown error'}`);
       }
       progress.value = '';
     } finally {
@@ -53,16 +71,11 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
       const handle = await (item as any).getAsFileSystemHandle() as FileSystemDirectoryHandle;
       if (handle.kind === 'directory') {
         loading.value = true;
-        progress.value = 'Importing files...';
         try {
-          const count = await importFromFSAA(handle as FileSystemDirectoryHandle, (current, total) => {
-            progress.value = `Importing ${current} / ${total}...`;
-          });
-          markMigrated();
-          progress.value = `Imported ${count} files. Loading...`;
-          await onLoadComplete();
+          await runImport(handle as FileSystemDirectoryHandle);
         } catch (err) {
           console.error('Drop import failed:', err);
+          toast.error(`Import failed: ${(err as Error)?.message ?? 'unknown error'}`);
           progress.value = '';
         } finally {
           loading.value = false;

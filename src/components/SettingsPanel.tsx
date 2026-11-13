@@ -4,7 +4,7 @@ import { SubscriptionPanel } from './SubscriptionPanel';
 import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
-import { listTrash, purgeNote } from '../lib/db';
+import { listTrash, purgeTrashed } from '../lib/db';
 import { toast } from '../lib/toast';
 import { settleOpenNote } from '../lib/autosave';
 
@@ -173,12 +173,15 @@ export function SettingsPanel() {
                 return;
               }
               if (!confirm(str.data.emptyTrashConfirm.replace('{n}', String(trashed.length)))) return;
-              let purged = 0;
+              let purged = 0, failed = 0;
               for (const n of trashed) {
-                try { await purgeNote(n._id); purged++; } catch (err) {
-                  console.warn(`purgeNote failed for ${n._id}:`, err);
+                // The list was read before the confirm dialog — a note restored since then is live and must stay.
+                try { if ((await purgeTrashed(n._id)) === 'done') purged++; } catch (err) {
+                  console.warn(`purgeTrashed failed for ${n._id}:`, err);
+                  failed++;
                 }
               }
+              if (failed) toast.error(`Could not delete ${failed} of ${trashed.length} notes.`);
               toast.success(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
             }}>{str.data.emptyTrash}</button>
           </div>

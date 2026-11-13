@@ -1,6 +1,8 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { listTrash, restoreNote, purgeNote } from '../lib/db';
+import { listTrash, restoreTrashed, purgeTrashed } from '../lib/db';
+import type { TrashAction } from '../lib/db';
+import { toast } from '../lib/toast';
 import type { NoteDoc } from '../lib/db';
 import { t } from '../i18n';
 
@@ -28,6 +30,19 @@ export function TrashPanel() {
 
   const str = t.value.trash;
 
+  // The row may be stale (restored or purged elsewhere since the list was read).
+  async function act(id: string, op: (id: string) => Promise<TrashAction>) {
+    try {
+      const result = await op(id);
+      if (result === 'not-trashed') toast.info(`"${id}" was already restored — left untouched.`);
+      else if (result === 'gone') toast.info(`"${id}" is no longer in the trash.`);
+    } catch (e: any) {
+      toast.error(`Trash action failed: ${e?.message ?? 'unknown error'}`);
+    } finally {
+      await refresh().catch(() => {});
+    }
+  }
+
   return (
     <div class="trash-panel">
       <button
@@ -53,10 +68,7 @@ export function TrashPanel() {
                 class="trash-restore"
                 title={`${str.restore}: ${n._id}`}
                 aria-label={`${str.restore}: ${n._id}`}
-                onClick={async () => {
-                  await restoreNote(n._id);
-                  await refresh();
-                }}
+                onClick={() => act(n._id, restoreTrashed)}
               >
                 {str.restore}
               </button>
@@ -64,10 +76,7 @@ export function TrashPanel() {
                 class="trash-purge"
                 title={`${str.deleteForever}: ${n._id}`}
                 aria-label={`${str.deleteForever}: ${n._id}`}
-                onClick={async () => {
-                  await purgeNote(n._id);
-                  await refresh();
-                }}
+                onClick={() => act(n._id, purgeTrashed)}
               >
                 {str.deleteForever}
               </button>

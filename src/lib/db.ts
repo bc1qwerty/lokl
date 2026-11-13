@@ -229,6 +229,34 @@ export async function purgeNote(id: string): Promise<void> {
   await removeAllLeaves(id);
 }
 
+// The trash panel works from a list that can be seconds old. Another tab or
+// device may have restored (or already purged) the note since — "Delete forever"
+// on that stale row used to wipe a LIVE note, irreversibly, on every device.
+// These re-read the note at the moment of the click and act only on real trash.
+export type TrashAction = 'done' | 'not-trashed' | 'gone';
+
+async function trashedState(id: string): Promise<TrashAction> {
+  try {
+    const doc = await getDB().get(id);
+    return doc.trashed ? 'done' : 'not-trashed';
+  } catch (e: any) {
+    if (e?.status === 404) return 'gone';
+    throw e;
+  }
+}
+
+export async function purgeTrashed(id: string): Promise<TrashAction> {
+  const state = await trashedState(id);
+  if (state === 'done') await removeAllLeaves(id);
+  return state;
+}
+
+export async function restoreTrashed(id: string): Promise<TrashAction> {
+  const state = await trashedState(id);
+  if (state === 'done') await restoreNote(id);
+  return state;
+}
+
 export async function listTrash(): Promise<NoteDoc[]> {
   const result = await getDB().allDocs({ include_docs: true });
   return result.rows

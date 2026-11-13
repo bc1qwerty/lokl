@@ -1,4 +1,5 @@
 import { putNote, listNotes } from './db';
+import { safeNoteId } from './note-path';
 
 const TMP_SUFFIX = '.lokl-tmp';
 
@@ -46,23 +47,56 @@ export function markMigrated(): void {
   localStorage.setItem('lokl_storage_migrated', '1');
 }
 
-// Import all .md files from a FSAA directory into PouchDB
+export interface ImportReport {
+  imported: number;
+  /** Files that could not be stored, with the reason — never dropped silently. */
+  skipped: Array<{ path: string; reason: string }>;
+  /** Files stored under another id because the original one cannot be a note id. */
+  renamed: Array<{ from: string; to: string }>;
+}
+
+// Import all .md files from a FSAA directory into PouchDB.
+// One bad file must not end the import: it used to throw out of the loop on the
+// first "_index.md" (PouchDB refuses ids starting with "_"), leaving a partial
+// vault that looked complete.
 export async function importFromFSAA(
   dirHandle: FileSystemDirectoryHandle,
   onProgress?: (current: number, total: number) => void
-): Promise<number> {
+): Promise<ImportReport> {
   const files = await collectFiles(dirHandle);
-  let imported = 0;
+  const report: ImportReport = { imported: 0, skipped: [], renamed: [] };
+  const taken = new Set(files.map((f) => f.path));
+  let done = 0;
 
   for (const { path, handle } of files) {
-    const file = await handle.getFile();
-    const content = await file.text();
-    await putNote(path, content);
-    imported++;
-    onProgress?.(imported, files.length);
+    try {
+      const id = safeNoteId(path);
+      if (id !== path) {
+        // The swapped name may already belong to another file of this folder.
+        if (taken.has(id)) throw new Error(`"${id}" already exists`);
+        taken.add(id);
+      }
+      const file = await handle.getFile();
+      const content = await file.text();
+      await putNote(id, content);
+      if (id !== path) report.renamed.push({ from: path, to: id });
+      report.imported++;
+    } catch (e: any) {
+      report.skipped.push({ path, reason: e?.message ?? String(e) });
+    }
+    onProgress?.(++done, files.length);
   }
 
-  return imported;
+  return report;
+}
+
+/** One line for the UI: "Imported 7 files. Renamed 2 (_a.md → -a.md, …). Skipped 1 (x.md)." */
+export function describeImport(r: ImportReport): string {
+  const list = (items: string[]) => items.slice(0, 5).join(', ') + (items.length > 5 ? `, +${items.length - 5} more` : '');
+  let msg = `Imported ${r.imported} file${r.imported === 1 ? '' : 's'}.`;
+  if (r.renamed.length) msg += ` Renamed ${r.renamed.length} (names can't start with "_"): ${list(r.renamed.map((x) => `${x.from} → ${x.to}`))}.`;
+  if (r.skipped.length) msg += ` Skipped ${r.skipped.length}: ${list(r.skipped.map((x) => `${x.path} (${x.reason})`))}.`;
+  return msg;
 }
 
 async function collectFiles(
