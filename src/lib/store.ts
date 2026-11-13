@@ -39,8 +39,17 @@ export interface Settings {
   editorLineNumbers: boolean;
 }
 const defaultSettings: Settings = { fontSize: 14, sortBy: 'name', editorLineNumbers: true };
-const stored = localStorage.getItem('lokl-settings');
-export const settings = signal<Settings>(stored ? { ...defaultSettings, ...JSON.parse(stored) } : defaultSettings);
+function loadSettings(): Settings {
+  // A corrupt value must not take the whole app down at module load.
+  try {
+    const stored = localStorage.getItem('lokl-settings');
+    const parsed = stored ? JSON.parse(stored) : null;
+    return parsed && typeof parsed === 'object' ? { ...defaultSettings, ...parsed } : defaultSettings;
+  } catch {
+    return defaultSettings;
+  }
+}
+export const settings = signal<Settings>(loadSettings());
 
 export function updateSettings(patch: Partial<Settings>) {
   const next = { ...settings.value, ...patch };

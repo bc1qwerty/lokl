@@ -42,6 +42,17 @@ function updateSyncState(status: SyncStatus, error?: string) {
   };
 }
 
+// With retry:true a network failure or 5xx arrives as paused(err), not as
+// 'error' — reporting it as synced would stamp lastSynced while nothing is
+// reaching the server.
+export function onPaused(err?: unknown): void {
+  if (err || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    updateSyncState('error', 'Offline — will retry');
+  } else {
+    updateSyncState('synced');
+  }
+}
+
 export function startSync(): void {
   stopSync();
 
@@ -65,8 +76,8 @@ export function startSync(): void {
       updateSyncState('syncing');
       resolveAllConflicts().catch(err => console.error('Conflict resolve failed:', err));
     })
-    .on('paused', () => {
-      updateSyncState('synced');
+    .on('paused', (err?: unknown) => {
+      onPaused(err);
     })
     .on('active', () => {
       updateSyncState('syncing');

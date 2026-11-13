@@ -1,11 +1,12 @@
-import { openTabs, currentFilePath, closeTab, addTab } from '../lib/store';
+import { openTabs, currentFilePath } from '../lib/store';
 import { t } from '../i18n';
 
 interface Props {
   onTabClick: (path: string) => void;
+  onTabClose: (path: string) => void;
 }
 
-export function TabBar({ onTabClick }: Props) {
+export function TabBar({ onTabClick, onTabClose }: Props) {
   const tabs = openTabs.value;
   if (tabs.length === 0) return null;
 
@@ -26,7 +27,7 @@ export function TabBar({ onTabClick }: Props) {
               class="tab-close"
               onClick={(e) => {
                 e.stopPropagation();
-                closeTab(path);
+                onTabClose(path);
               }}
               title={t.value.tabs.close}
             >

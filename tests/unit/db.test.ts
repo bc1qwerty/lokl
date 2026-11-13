@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
-import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
+import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflictSiblings, listConflicts, resolveConflict, restoreNote, purgeNote, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -237,5 +237,50 @@ describe('atomicRename', () => {
     await putNote('same.md', 'x');
     await atomicRename('same.md', 'same.md');
     expect((await getNote('same.md'))?.content).toBe('x');
+  });
+});
+
+describe('overwrite safety', () => {
+  it('listConflictSiblings returns what listNotes hides', async () => {
+    await putNote('keep.md', 'k');
+    await putNote('side.md', 's');
+    const side = await getDB().get('side.md');
+    await getDB().put({ ...side, conflictOf: 'keep.md' });
+    expect((await listNotes()).map(n => n._id)).toEqual(['keep.md']);
+    expect((await listConflictSiblings()).map(n => n._id)).toEqual(['side.md']);
+    await deleteNote('side.md');
+    expect(await listConflictSiblings()).toEqual([]);
+  });
+
+  it('reusing the name of a trashed note keeps the trash copy', async () => {
+    await putNote('todo.md', 'precious');
+    await deleteNote('todo.md');
+    await putNote('todo.md', '');
+    expect((await getNote('todo.md'))?.content).toBe('');
+    const trash = await listTrash();
+    expect(trash.map(t => t.content)).toEqual(['precious']);
+    expect(trash[0]._id).not.toBe('todo.md');
+  });
+
+  it('renaming back onto a trashed name keeps the trash copy', async () => {
+    await putNote('a.md', 'v1');
+    await atomicRename('a.md', 'b.md');
+    await putNote('b.md', 'v2');
+    await atomicRename('b.md', 'a.md');
+    expect((await getNote('a.md'))?.content).toBe('v2');
+    expect((await listTrash()).map(t => t.content).sort()).toEqual(['v1', 'v2']);
+  });
+
+  it('rename keeps createdAt', async () => {
+    await putNote('a.md', 'x');
+    const created = (await getNote('a.md'))!.createdAt;
+    await new Promise(r => setTimeout(r, 5));
+    await atomicRename('a.md', 'b.md');
+    expect((await getNote('b.md'))!.createdAt).toBe(created);
+  });
+
+  it('putNote returns the stored rev', async () => {
+    const rev = await putNote('a.md', 'x');
+    expect((await getDB().get('a.md'))._rev).toBe(rev);
   });
 });

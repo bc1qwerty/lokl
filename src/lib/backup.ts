@@ -1,4 +1,3 @@
-import JSZip from 'jszip';
 import { getDB, getNote } from './db';
 import type { NoteDoc } from './db';
 
@@ -42,6 +41,8 @@ export async function exportJSON(): Promise<Blob> {
  * Export visible markdown files (excludes trashed + conflict siblings) to a ZIP.
  */
 export async function exportZIP(): Promise<Blob> {
+  // Loaded on demand — only this export needs it (~95KB out of the main bundle).
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const result = await getDB().allDocs({ include_docs: true });
   for (const row of result.rows) {
@@ -65,10 +66,20 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
   if (!payload || payload.version !== 1 || !Array.isArray(payload.notes)) {
     throw new Error('Invalid backup payload');
   }
+  // Validate everything before writing anything: a bad entry halfway through
+  // used to throw and leave a partial import behind.
+  for (const note of payload.notes) {
+    if (!note || typeof note !== 'object') throw new Error('Invalid backup payload: note is not an object');
+    if (typeof note._id !== 'string' || !note._id || note._id.startsWith('_')) {
+      throw new Error('Invalid backup payload: bad note id');
+    }
+    if (typeof note.content !== 'string') {
+      throw new Error(`Invalid backup payload: "${note._id}" has no text content`);
+    }
+  }
   let imported = 0;
   let conflicts = 0;
   for (const note of payload.notes) {
-    if (!note?._id) continue;
     // Strip any stray _rev the payload might still carry (exportJSON
     // already does this, but defend against hand-edited blobs).
     const { _rev: _, ...payloadDoc } = note as NoteDoc & { _rev?: string };

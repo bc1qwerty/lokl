@@ -90,7 +90,33 @@ export async function getNote(id: string): Promise<NoteDoc | null> {
 
 const PUT_MAX_RETRY = 25;
 
-export async function putNote(id: string, content: string): Promise<void> {
+export interface PutOptions {
+  /** The _rev the editor loaded. If the stored doc has moved past it (a sync
+   *  pulled a remote edit while the user was typing), the stored version is
+   *  kept as a conflict sibling instead of being silently overwritten. */
+  baseRev?: string;
+  /** Carry the original creation time across a rename. */
+  createdAt?: string;
+}
+
+// Park a doc that is about to be overwritten under a sibling id. Deterministic
+// id (rev only) so a retry after a 409 rewrites the same sibling.
+async function parkDoc(doc: NoteDoc, kind: 'conflict' | 'trashed', extra: Partial<NoteDoc>): Promise<void> {
+  const base = doc._id.replace(/\.md$/, '');
+  const siblingId = `${base} (${kind}-${doc._rev}).md`;
+  let siblingRev: string | undefined;
+  try {
+    siblingRev = (await getDB().get(siblingId))._rev;
+  } catch (e: any) {
+    if (e.status !== 404) throw e;
+  }
+  const { _rev, ...rest } = doc;
+  void _rev;
+  await getDB().put({ ...rest, ...extra, _id: siblingId, _rev: siblingRev });
+}
+
+/** Writes the note and returns its new _rev. */
+export async function putNote(id: string, content: string, opts: PutOptions = {}): Promise<string> {
   const now = new Date().toISOString();
   for (let attempt = 0; attempt < PUT_MAX_RETRY; attempt++) {
     // Read RAW (not via getNote) so legacy deleted: true docs are still seen — we
@@ -101,6 +127,17 @@ export async function putNote(id: string, content: string): Promise<void> {
     } catch (e: any) {
       if (e.status !== 404) throw e;
     }
+    const inTrash = !!existing && (!!existing.trashed || !!existing.deleted);
+    if (existing && inTrash) {
+      // Reusing the name of a trashed note must not destroy the trash copy.
+      await parkDoc(existing, 'trashed', {
+        trashed: true,
+        trashedAt: existing.trashedAt ?? existing.updatedAt,
+        deleted: undefined,
+      });
+    } else if (existing && opts.baseRev && existing._rev !== opts.baseRev && existing.content !== content) {
+      await parkDoc(existing, 'conflict', { conflictOf: id });
+    }
     const doc: NoteDoc = {
       _id: id,
       _rev: existing?._rev,
@@ -108,12 +145,12 @@ export async function putNote(id: string, content: string): Promise<void> {
       title: extractTitle(content, id),
       tags: extractTags(content),
       links: extractLinks(content),
-      createdAt: existing?.createdAt ?? now,
+      createdAt: opts.createdAt ?? (inTrash ? now : existing?.createdAt ?? now),
       updatedAt: now,
     };
     try {
-      await getDB().put(doc);
-      return;
+      const res = await getDB().put(doc);
+      return res.rev;
     } catch (e: any) {
       if (e.status === 409 && attempt < PUT_MAX_RETRY - 1) {
         // Random jitter (0–9 ms) prevents all concurrent callers from
@@ -124,6 +161,7 @@ export async function putNote(id: string, content: string): Promise<void> {
       throw e;
     }
   }
+  throw new Error('putNote: retries exhausted');
 }
 
 export async function deleteNote(id: string): Promise<void> {
@@ -225,6 +263,14 @@ export function buildFileTree(notes: NoteDoc[]): FileEntry[] {
   return sortEntries(root);
 }
 
+/** Conflict siblings (losing sync revisions, colliding imports). listNotes() hides these. */
+export async function listConflictSiblings(): Promise<NoteDoc[]> {
+  const result = await getDB().allDocs({ include_docs: true });
+  return result.rows
+    .map(r => r.doc as NoteDoc | undefined)
+    .filter((d): d is NoteDoc => !!d && !!d.conflictOf && !d.trashed && !d.deleted);
+}
+
 export async function listConflicts(): Promise<NoteDoc[]> {
   const result = await getDB().allDocs({ include_docs: true, conflicts: true });
   return result.rows
@@ -265,7 +311,7 @@ export async function atomicRename(oldPath: string, newPath: string): Promise<vo
   if (!source) throw new Error('Source not found');
 
   // Phase 1: copy to new path.
-  await putNote(newPath, source.content);
+  await putNote(newPath, source.content, { createdAt: source.createdAt });
 
   // Phase 2: delete (trash) old path. On failure, roll back by purging the new copy.
   try {

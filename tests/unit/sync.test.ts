@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
 import { setDB, getDB, putNote, listConflicts } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
-import { startSync, stopSync, isSyncing, __setRemoteFactory } from '../../src/lib/sync';
+import { startSync, stopSync, isSyncing, onPaused, __setRemoteFactory } from '../../src/lib/sync';
 import { syncState } from '../../src/lib/store';
 
 beforeEach(() => {
@@ -96,5 +96,19 @@ describe('sync auto-resolves conflicts', () => {
     stopSync();
     expect(found).toBe(true);
     expect(await listConflicts()).toEqual([]);
+  });
+});
+
+describe('paused with an error is not "synced"', () => {
+  it('paused(err) reports an error and does not stamp lastSynced', () => {
+    onPaused(new Error('Failed to fetch'));
+    expect(syncState.value.status).toBe('error');
+    expect(syncState.value.lastSynced).toBeUndefined();
+  });
+
+  it('paused() without an error is synced', () => {
+    onPaused();
+    expect(syncState.value.status).toBe('synced');
+    expect(syncState.value.lastSynced).toBeInstanceOf(Date);
   });
 });

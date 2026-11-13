@@ -16,3 +16,7 @@ jobs:
       - run: npm run build
       - run: npm run test
       - run: npm run test:coverage
+      # 자동 저장·노트 전환은 실제 편집기에서만 드러난다 — 단위 테스트가 전부 통과하는 동안
+      # 디바운스 저장이 죽은 채로 배포된 적이 있다(2026-11). Playwright ≥1.62 여야 ubuntu 26.04 에서 돈다.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

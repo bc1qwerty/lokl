@@ -73,3 +73,17 @@ describe('backup.exportZIP', () => {
     expect(Object.keys(zip.files).sort()).toEqual(['b.md']);
   });
 });
+
+describe('importJSON validation', () => {
+  const blobOf = (notes: unknown[]) => new Blob([JSON.stringify({ version: 1, exportedAt: '', notes })]);
+
+  it('rejects a payload with non-text content before writing anything', async () => {
+    const blob = blobOf([{ _id: 'ok.md', content: 'fine' }, { _id: 'bad.md', content: { x: 1 } }]);
+    await expect(importJSON(blob)).rejects.toThrow(/no text content/);
+    expect(await listNotes()).toEqual([]);
+  });
+
+  it('rejects reserved ids', async () => {
+    await expect(importJSON(blobOf([{ _id: '_design/x', content: '' }]))).rejects.toThrow(/bad note id/);
+  });
+});

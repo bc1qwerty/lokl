@@ -1,11 +1,12 @@
-import { useSignal, useSignalEffect } from '@preact/signals';
+import { useSignal } from '@preact/signals';
 import { useCallback, useEffect } from 'preact/hooks';
 import {
-  vault, fileTree, currentFilePath, currentFileContent, savedContent,
+  vault, fileTree, currentFilePath, openTabs,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, addTab, settings,
+  isLoading, addTab, closeTab, settings,
 } from './lib/store';
+import { saveStatus, startAutosave, flushPendingSave, showNote, noteRevSeen } from './lib/autosave';
 import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
@@ -35,14 +36,11 @@ import { toast } from './lib/toast';
 const Editor = lazy(() => import('./components/Editor').then((m) => ({ default: m.Editor })));
 
 export function App() {
-  const saveStatus = useSignal<'clean' | 'dirty' | 'saving' | 'saved'>('clean');
   const newFileOpen = useSignal(false);
   const newFileName = useSignal('');
   const renameOpen = useSignal(false);
   const renameTarget = useSignal('');
   const renameValue = useSignal('');
-  const saveTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
-  const statusTimerRef = useSignal<ReturnType<typeof setTimeout> | null>(null);
   const dbError = useSignal<string | null>(null);
 
   // Initialize PouchDB on mount
@@ -89,46 +87,16 @@ export function App() {
     }
   }
 
-  // Auto-save with debounce
-  useSignalEffect(() => {
-    const dirty = isDirty.value;
-    const path = currentFilePath.value;
-
-    if (!dirty || !path) {
-      if (!dirty) saveStatus.value = 'clean';
-      return;
-    }
-    saveStatus.value = 'dirty';
-
-    if (saveTimerRef.value) clearTimeout(saveTimerRef.value);
-    saveTimerRef.value = setTimeout(async () => {
-      try {
-        saveStatus.value = 'saving';
-        await putNote(path, currentFileContent.value);
-        savedContent.value = currentFileContent.value;
-        updateLinksForFile(path, currentFileContent.value);
-        indexFile(path, currentFileContent.value);
-        saveStatus.value = 'saved';
-        if (statusTimerRef.value) clearTimeout(statusTimerRef.value);
-        statusTimerRef.value = setTimeout(() => { saveStatus.value = 'clean'; }, 2000);
-      } catch (e: any) {
-        console.error('Save failed:', e);
-        if (e?.name === 'QuotaExceededError' || e?.status === 507) {
-          toast.error('Storage full — empty trash to free space');
-        } else {
-          toast.error(`Save failed: ${e?.message ?? 'unknown error'}`);
-        }
-        saveStatus.value = 'dirty';
-      }
-    }, 1000);
-  });
+  // Auto-save with debounce (logic lives in lib/autosave so it can be tested without the UI)
+  useEffect(() => startAutosave(), []);
 
   // PouchDB change feed (replaces 3s polling)
   useEffect(() => {
     const watcher = watchChanges((doc) => {
-      if (doc._id === currentFilePath.value && !isDirty.value) {
-        savedContent.value = doc.content;
-        currentFileContent.value = doc.content;
+      // While dirty the stored rev is deliberately not adopted: the next save then
+      // sees it moved and keeps the incoming version as a conflict copy.
+      if (doc._id === currentFilePath.value && !isDirty.value && !doc.trashed) {
+        showNote(doc._id, doc.content, doc._rev);
       }
       // Rebuild file tree on any change
       listNotes().then(notes => {
@@ -141,17 +109,30 @@ export function App() {
   // Open file (with tab)
   const handleFileClick = useCallback(async (path: string) => {
     try {
+      // Unsaved edits belong to the note being left. If they can't be saved,
+      // stay on it rather than drop them.
+      if (!(await flushPendingSave())) return;
       const note = await getNote(path);
       if (!note) return;
-      savedContent.value = note.content;
-      currentFileContent.value = note.content;
-      currentFilePath.value = path;
+      showNote(path, note.content, note._rev);
       addTab(path);
       saveStatus.value = 'clean';
     } catch (e) {
       console.error('Failed to read file:', e);
     }
   }, []);
+
+  // Close a tab. closeTab() only moves currentFilePath; the editor text has to be
+  // swapped with it, or the next save writes the closed note's text into the
+  // note that became current.
+  const handleTabClose = useCallback(async (path: string, opts: { save?: boolean } = {}) => {
+    if (currentFilePath.value !== path) { closeTab(path); return; }
+    if (opts.save !== false && !(await flushPendingSave())) return;
+    showNote(null, '');
+    closeTab(path);
+    const rest = openTabs.value;
+    if (rest.length > 0) await handleFileClick(rest[rest.length - 1]);
+  }, [handleFileClick]);
 
   // Tab click (switch to already loaded file)
   const handleTabClick = useCallback(async (path: string) => {
@@ -174,6 +155,12 @@ export function App() {
     if (!name) return;
     const path = name.endsWith('.md') ? name : `${name}.md`;
     try {
+      // An existing note with this name is opened, never blanked.
+      if (await getNote(path)) {
+        newFileOpen.value = false;
+        await handleFileClick(path);
+        return;
+      }
       await putNote(path, '');
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
@@ -220,6 +207,7 @@ export function App() {
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + newName;
     try {
+      if (currentFilePath.value === oldPath && !(await flushPendingSave())) return;
       await atomicRename(oldPath, newPath);
       removeFromIndex(oldPath);
       const renamed = await getNote(newPath);
@@ -227,7 +215,11 @@ export function App() {
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
       renameOpen.value = false;
-      if (currentFilePath.value === oldPath) await handleFileClick(newPath);
+      if (currentFilePath.value === oldPath) {
+        showNote(null, '');
+        closeTab(oldPath);
+        await handleFileClick(newPath);
+      }
     } catch (e: any) {
       console.error('Rename failed:', e);
       toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
@@ -239,23 +231,24 @@ export function App() {
     try {
       await deleteNote(path);
       removeFromIndex(path);
-      const { closeTab } = await import('./lib/store');
-      closeTab(path);
+      await handleTabClose(path, { save: false });
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
     } catch (e: any) {
       console.error('Delete failed:', e);
       toast.error(`Delete failed: ${e?.message ?? 'unknown error'}`);
     }
-  }, []);
+  }, [handleTabClose]);
 
   const handleDuplicate = useCallback(async (path: string) => {
     const name = path.split('/').pop()?.replace(/\.md$/, '') || 'untitled';
     const dir = path.includes('/') ? path.substring(0, path.lastIndexOf('/') + 1) : '';
-    const newPath = `${dir}${name} copy.md`;
     try {
       const note = await getNote(path);
       if (!note) return;
+      // Never land on an existing note — "X copy" may already be one.
+      let newPath = `${dir}${name} copy.md`;
+      for (let n = 2; await getNote(newPath); n++) newPath = `${dir}${name} copy ${n}.md`;
       await putNote(newPath, note.content);
       indexFile(newPath, note.content);
       const notes = await listNotes();
@@ -284,21 +277,7 @@ export function App() {
       if (mod && e.key === 'n') { e.preventDefault(); handleNewFile(); }
       if (mod && e.key === 's') {
         e.preventDefault();
-        if (currentFilePath.value && isDirty.value) {
-          putNote(currentFilePath.value, currentFileContent.value)
-            .then(() => {
-              savedContent.value = currentFileContent.value;
-              saveStatus.value = 'saved';
-            })
-            .catch((err: any) => {
-              console.error('Save failed (Cmd+S):', err);
-              if (err?.name === 'QuotaExceededError' || err?.status === 507) {
-                toast.error('Storage full — empty trash to free space');
-              } else {
-                toast.error(`Save failed: ${err?.message ?? 'unknown error'}`);
-              }
-            });
-        }
+        void flushPendingSave();
       }
       if (mod && e.key === '\\') { e.preventDefault(); sidebarOpen.value = !sidebarOpen.value; }
       // Font size: Cmd+= / Cmd+-
@@ -377,7 +356,7 @@ export function App() {
 
       <main class="main-content">
         <div style="display:flex; flex-direction:column; flex:1; min-width:0; overflow:hidden">
-          <TabBar onTabClick={handleTabClick} />
+          <TabBar onTabClick={handleTabClick} onTabClose={handleTabClose} />
           <div style="display:flex; flex:1; overflow:hidden">
             {(mode === 'edit' || mode === 'split') && (
               <Suspense fallback={null}>
