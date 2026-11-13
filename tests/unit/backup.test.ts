@@ -87,3 +87,22 @@ describe('importJSON validation', () => {
     await expect(importJSON(blobOf([{ _id: '_design/x', content: '' }]))).rejects.toThrow(/bad note id/);
   });
 });
+
+describe('importing the same backup again adds nothing', () => {
+  it('trashed notes and already-kept copies are not duplicated', async () => {
+    await putNote('live.md', 'old text');
+    await putNote('gone.md', 'in the trash');
+    const gone = await getDB().get('gone.md');
+    await getDB().put({ ...gone, trashed: true, trashedAt: new Date().toISOString() });
+    const blob = await exportJSON();
+    await putNote('live.md', 'new text');
+    const count = async () => (await getDB().allDocs()).rows.length;
+
+    const first = await importJSON(blob);
+    expect(first).toEqual({ imported: 0, conflicts: 1 }); // live.md's old text kept as a copy
+    const after = await count();
+    const second = await importJSON(blob);
+    expect(second).toEqual({ imported: 0, conflicts: 0 });
+    expect(await count()).toBe(after);
+  });
+});

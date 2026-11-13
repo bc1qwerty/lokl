@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'preact/hooks';
 import { effect, useSignalEffect } from '@preact/signals';
 import { EditorView, keymap, ViewPlugin, Decoration, type DecorationSet, type ViewUpdate, lineNumbers } from '@codemirror/view';
-import { EditorState, Compartment, type Extension } from '@codemirror/state';
+import { EditorState, Compartment, Transaction, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
@@ -75,9 +75,12 @@ function getExtensions(): Extension[] {
 export function Editor() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // The note the current undo history belongs to.
+  const shownPath = useRef<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
+    shownPath.current = currentFilePath.peek();
     const view = new EditorView({
       state: EditorState.create({ doc: currentFileContent.value, extensions: getExtensions() }),
       parent: containerRef.current,
@@ -101,9 +104,23 @@ export function Editor() {
     const view = viewRef.current;
     const content = currentFileContent.peek();
     if (!view || path === null) return;
+    //  • Undo history never crosses notes. Switching used to be an ordinary
+    //    transaction in one shared history: Cmd+Z right after opening a note
+    //    "undid" the switch — the previous note's text (or nothing) landed in
+    //    this note and autosave wrote it. A different note gets a fresh state.
+    if (path !== shownPath.current) {
+      shownPath.current = path;
+      view.setState(EditorState.create({ doc: content, extensions: getExtensions() }));
+      return;
+    }
+    //  • Same note, text replaced from outside (another tab, sync): not an edit
+    //    of the user's, so undo must not step back across it.
     const current = view.state.doc.toString();
     if (current !== content) {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: content },
+        annotations: Transaction.addToHistory.of(false),
+      });
     }
   }), []);
 

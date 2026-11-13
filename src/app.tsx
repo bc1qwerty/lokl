@@ -119,7 +119,8 @@ export function App() {
       // stay on it rather than drop them. Nothing is awaited between the settle
       // resolving clean and showNote below, so no keystroke can fall in between
       // (the note was fetched first for that reason).
-      if (!(await settleOpenNote()) || isDirty.value) return;
+      // (With no note open there is nothing to lose — never let leftover text block opening one.)
+      if (currentFilePath.value && (!(await settleOpenNote()) || isDirty.value)) return;
       showNote(path, note.content, note._rev);
       addTab(path);
       saveStatus.value = 'clean';
@@ -383,7 +384,9 @@ export function App() {
         <div style="display:flex; flex-direction:column; flex:1; min-width:0; overflow:hidden">
           <TabBar onTabClick={handleTabClick} onTabClose={handleTabClose} />
           <div style="display:flex; flex:1; overflow:hidden">
-            {(mode === 'edit' || mode === 'split') && (
+            {/* No note, no editor: a live editor with nothing open took keystrokes that had nowhere
+                to be saved, and that orphan text then blocked every attempt to open a note. */}
+            {currentFilePath.value && (mode === 'edit' || mode === 'split') && (
               <Suspense fallback={null}>
                 <Editor />
               </Suspense>

@@ -6,6 +6,7 @@ import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index'
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
 import { listTrash, purgeNote } from '../lib/db';
 import { toast } from '../lib/toast';
+import { settleOpenNote } from '../lib/autosave';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -138,11 +139,14 @@ export function SettingsPanel() {
             <label style="font-size:13px; color:var(--text-secondary); margin-bottom:4px">{str.data.title}</label>
 
             <button class="btn-secondary" onClick={async () => {
+              // Land what is still in the editor first — the last second of typing was missing from backups.
+              await settleOpenNote();
               const blob = await exportJSON();
               download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.json`);
             }}>{str.data.exportJson}</button>
 
             <button class="btn-secondary" onClick={async () => {
+              await settleOpenNote();
               const blob = await exportZIP();
               download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.zip`);
             }}>{str.data.exportZip}</button>

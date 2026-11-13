@@ -330,3 +330,101 @@ test('"open original" on a conflict copy follows the note through a rename', asy
   await expect(page.locator('.tab-item.active')).toContainText('moved', { timeout: 5_000 });
   await expect(page.locator('.cm-content')).toContainText('base');
 });
+
+async function dbContent(page: Page, id: string): Promise<string | null> {
+  return page.evaluate(async (docId) => {
+    const PouchDB = (window as unknown as { PouchDB?: unknown }).PouchDB;
+    void PouchDB;
+    return new Promise<string | null>((resolve) => {
+      const open = indexedDB.open('_pouch_lokl');
+      open.onerror = () => resolve(null);
+      open.onsuccess = () => {
+        const idb = open.result;
+        const tx = idb.transaction(['document-store', 'by-sequence'], 'readonly');
+        const get = tx.objectStore('document-store').get(docId);
+        get.onsuccess = () => {
+          const meta = get.result;
+          if (!meta) { idb.close(); resolve(null); return; }
+          const seq = tx.objectStore('by-sequence').get(meta.seq);
+          seq.onsuccess = () => { idb.close(); resolve(seq.result?.content ?? null); };
+          seq.onerror = () => { idb.close(); resolve(null); };
+        };
+        get.onerror = () => { idb.close(); resolve(null); };
+      };
+    });
+  }, id);
+}
+
+// Undo history used to be one shared history across notes, and switching notes
+// was an ordinary edit in it. Cmd+Z right after opening a note undid the switch:
+// the note was blanked (or filled with the previous note's text) and autosaved.
+test('undo right after opening or switching notes never touches the note', async ({ page }) => {
+  await freshStart(page);
+  await createNote(page, 'alpha');
+  await type(page, 'ALPHA-TEXT');
+  await saved(page);
+  await createNote(page, 'beta');
+  await type(page, 'BETA-TEXT');
+  await saved(page);
+
+  // Fresh load → open alpha → open beta → undo, redo.
+  await reloadClean(page);
+  await treeItem(page, 'alpha').click();
+  await expect(page.locator('.cm-content')).toContainText('ALPHA-TEXT');
+  await treeItem(page, 'beta').click();
+  await expect(page.locator('.cm-content')).toContainText('BETA-TEXT');
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.waitForTimeout(1500); // past the autosave debounce
+  expect(await editorText(page)).toBe('BETA-TEXT');
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await page.keyboard.press('ControlOrMeta+y');
+  await page.waitForTimeout(1500);
+  expect(await editorText(page)).toBe('BETA-TEXT');
+  expect(await dbContent(page, 'beta.md')).toBe('BETA-TEXT');
+  expect(await dbContent(page, 'alpha.md')).toBe('ALPHA-TEXT');
+
+  // Undo still works inside one note, and stops at the note's own beginning.
+  await type(page, ' more');
+  await page.keyboard.press('ControlOrMeta+z');
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ControlOrMeta+z');
+  await page.waitForTimeout(1500);
+  expect(await editorText(page)).toBe('BETA-TEXT');
+
+  // Back to alpha right after editing beta: alpha's undo must not replay beta's edits.
+  await type(page, ' again');
+  await treeItem(page, 'alpha').click();
+  await expect(page.locator('.cm-content')).toContainText('ALPHA-TEXT');
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.waitForTimeout(1500);
+  expect(await editorText(page)).toBe('ALPHA-TEXT');
+  expect(await dbContent(page, 'alpha.md')).toBe('ALPHA-TEXT');
+  expect(await dbContent(page, 'beta.md')).toBe('BETA-TEXT again');
+});
+
+// With no note open the editor used to stay live: typing there had nowhere to be
+// saved, and that orphan text then blocked opening any note.
+test('there is no editor to type into until a note is open, and notes still open afterwards', async ({ page }) => {
+  await freshStart(page);
+  await createNote(page, 'only');
+  await type(page, 'ONLY-TEXT');
+  await saved(page);
+
+  await reloadClean(page);
+  await expect(page.locator('.cm-content')).toHaveCount(0);
+  await page.keyboard.type('stray keys');
+  await treeItem(page, 'only').click();
+  await expect(page.locator('.cm-content')).toContainText('ONLY-TEXT', { timeout: 5_000 });
+
+  // Closing the last tab takes the editor (and the closed note's text) away.
+  await page.locator('.tab-close').first().click();
+  await expect(page.locator('.cm-content')).toHaveCount(0);
+  await page.keyboard.type('more stray keys');
+  await treeItem(page, 'only').click();
+  await expect(page.locator('.cm-content')).toContainText('ONLY-TEXT', { timeout: 5_000 });
+  expect(await editorText(page)).toBe('ONLY-TEXT');
+  await page.waitForTimeout(1500);
+  expect(await dbContent(page, 'only.md')).toBe('ONLY-TEXT');
+});

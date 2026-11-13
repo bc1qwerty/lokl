@@ -79,6 +79,12 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
   }
   let imported = 0;
   let conflicts = 0;
+  // Copies an earlier import of this same backup already left behind.
+  const alreadyKept = new Set<string>();
+  for (const row of (await getDB().allDocs({ include_docs: true })).rows) {
+    const d = row.doc as NoteDoc | undefined;
+    if (d?.conflictOf) alreadyKept.add(`${d.conflictOf}\u0000${d.content}`);
+  }
   for (const note of payload.notes) {
     // Strip any stray _rev the payload might still carry (exportJSON
     // already does this, but defend against hand-edited blobs).
@@ -91,8 +97,11 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
       imported++;
       continue;
     }
-    const existing = await getNote(note._id);
-    if (existing && existing.content === note.content) continue;
+    // Compare against the stored doc whatever its state. getNote() hides trashed
+    // notes, so every re-import of the same backup added another copy of each.
+    const existing = await getDB().get(note._id);
+    if (existing.content === note.content) continue;
+    if (alreadyKept.has(`${note._id}\u0000${note.content}`)) continue;
     // Collision: keep both. The sibling inherits the payload's metadata
     // (tags, trashed flag, etc.) but lives at a new id and points back
     // at the original via conflictOf.
@@ -101,6 +110,7 @@ export async function importJSON(blob: Blob): Promise<{ imported: number; confli
     const base = note._id.replace(/\.md$/, '');
     const siblingId = `${base} (conflict-${ts}-${rand}).md`;
     await getDB().put({ ...payloadDoc, _id: siblingId, conflictOf: note._id });
+    alreadyKept.add(`${note._id}\u0000${note.content}`);
     conflicts++;
   }
   return { imported, conflicts };

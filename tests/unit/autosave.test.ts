@@ -267,3 +267,27 @@ describe('applyChange (the change feed meeting the editor)', () => {
     expect(await listConflictSiblings()).toEqual([]);
   });
 });
+
+describe('a save that timed out but landed later', () => {
+  it('does not turn the user\'s own text into a conflict copy', async () => {
+    stop();
+    stop = startAutosave(DELAY, 40, 60); // retry after 40ms, give up waiting after 60ms
+    await putNote('slow.md', 'base');
+    await open('slow.md');
+    // The first write hangs past the timeout, then completes.
+    const db = getDB();
+    const realPut = db.put.bind(db);
+    let hung = false;
+    (db as any).put = async (doc: any, ...rest: any[]) => {
+      if (!hung && doc._id === 'slow.md') { hung = true; await wait(150); }
+      return realPut(doc, ...rest);
+    };
+    currentFileContent.value = 'base one';
+    await until(() => hung);
+    currentFileContent.value = 'base one two';
+    await until(async () => !isDirty.value && (await getNote('slow.md'))?.content === 'base one two', 4000);
+    await wait(200);
+    expect((await getNote('slow.md'))?.content).toBe('base one two');
+    expect(await listConflictSiblings()).toEqual([]);
+  });
+});

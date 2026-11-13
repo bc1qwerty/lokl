@@ -13,6 +13,7 @@ export const AUTOSAVE_DELAY_MS = 1000;
 /** After a failed save, try again on our own — the user may not type again. */
 export const SAVE_RETRY_MS = 5000;
 const SAVE_TIMEOUT_MS = 20_000;
+let saveTimeout = SAVE_TIMEOUT_MS;
 
 // Plain variables on purpose. These were signals read and written inside the
 // autosave effect, which made the effect re-trigger itself every frame and
@@ -114,10 +115,21 @@ async function doSave(path: string, content: string): Promise<boolean> {
     // storage handle gone silent — would otherwise block every later save and
     // every note switch without a word.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let gaveUp = false;
+    const write = putNote(path, content, {
+      baseRev: () => (openRev?.path === path ? openRev.rev : undefined),
+      abandoned: () => gaveUp,
+    });
+    // A write we stopped waiting for can still land once storage wakes up. Its
+    // rev is ours: without adopting it the next save saw "the stored note moved"
+    // and kept our own half-typed text as a conflict copy.
+    write.then((late) => {
+      if (openRev?.path === path && generation(late) > generation(openRev.rev)) openRev.rev = late;
+    }, () => undefined);
     const rev = await Promise.race([
-      putNote(path, content, { baseRev: openRev?.path === path ? openRev.rev : undefined }),
+      write,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('storage did not respond')), SAVE_TIMEOUT_MS);
+        timer = setTimeout(() => { gaveUp = true; reject(new Error('storage did not respond')); }, saveTimeout);
       }),
     ]).finally(() => clearTimeout(timer));
     updateLinksForFile(path, content);
@@ -212,8 +224,9 @@ export async function settleOpenNote(): Promise<boolean> {
 }
 
 /** Debounced auto-save. Returns the disposer. */
-export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number = SAVE_RETRY_MS): () => void {
+export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number = SAVE_RETRY_MS, timeoutMs: number = SAVE_TIMEOUT_MS): () => void {
   retryBase = retryDelay = retryMs;
+  saveTimeout = timeoutMs;
   const dispose = effect(() => {
     const dirty = isDirty.value;
     const path = currentFilePath.value;
@@ -236,5 +249,6 @@ export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     failStreak = 0;
     retryBase = retryDelay = SAVE_RETRY_MS;
+    saveTimeout = SAVE_TIMEOUT_MS;
   };
 }

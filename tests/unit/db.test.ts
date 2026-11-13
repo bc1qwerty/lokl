@@ -308,3 +308,119 @@ describe('atomicRename and conflict copies', () => {
     expect(siblings[0].content).toBe('other body');
   });
 });
+
+// Two devices and a server, each its own database. Every device resolves the
+// same conflict by itself; the results must be identical or the copies conflict
+// with each other and multiply.
+describe('conflict resolution converges across devices', () => {
+  async function replicate(from: PouchDB.Database<NoteDoc>, to: PouchDB.Database<NoteDoc>) {
+    await from.replicate.to(to);
+    await to.replicate.to(from);
+  }
+  async function on<T>(db: PouchDB.Database<NoteDoc>, fn: () => Promise<T>): Promise<T> {
+    setDB(db);
+    return fn();
+  }
+  async function resolveAll(db: PouchDB.Database<NoteDoc>) {
+    await on(db, async () => { for (const c of await listConflicts()) await resolveConflict(c._id); });
+  }
+  async function rows(db: PouchDB.Database<NoteDoc>) {
+    const r = await db.allDocs({ include_docs: true, conflicts: true });
+    return r.rows.map(x => x.doc as NoteDoc & { _conflicts?: string[] });
+  }
+  function three() {
+    return [freshDB(), freshDB(), freshDB()] as unknown as PouchDB.Database<NoteDoc>[];
+  }
+
+  it('one conflict → one copy, the same on both devices, and it stays one', async () => {
+    const [a, b, server] = three();
+    await on(a, () => putNote('n.md', 'base'));
+    await replicate(a, server); await replicate(b, server);
+    await on(a, () => putNote('n.md', 'edit from A'));
+    await on(b, () => putNote('n.md', 'edit from B'));
+    // Both come online, both see the conflict, both resolve before hearing of the other.
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+    await resolveAll(a); await resolveAll(b);
+    for (let round = 0; round < 4; round++) {
+      await replicate(a, server); await replicate(b, server);
+      await resolveAll(a); await resolveAll(b);
+    }
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+
+    for (const db of [a, b, server]) {
+      const all = await rows(db);
+      expect(all.filter(d => d._conflicts?.length).map(d => d._id)).toEqual([]);
+      const copies = all.filter(d => d.conflictOf);
+      expect(copies.length).toBe(1);
+      expect(copies[0].conflictOf).toBe('n.md');
+      const texts = [copies[0].content, all.find(d => d._id === 'n.md')!.content].sort();
+      expect(texts).toEqual(['edit from A', 'edit from B']);
+    }
+  });
+
+  it('trash on one device vs an offline edit on the other: the edit is never hidden', async () => {
+    const [a, b, server] = three();
+    await on(a, () => putNote('t.md', 'base'));
+    await replicate(a, server); await replicate(b, server);
+    await on(a, () => deleteNote('t.md'));
+    await on(b, () => putNote('t.md', 'offline edit'));
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+    await resolveAll(a); await resolveAll(b);
+    await replicate(a, server); await replicate(b, server);
+    await resolveAll(a); await resolveAll(b);
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+
+    for (const db of [a, b]) {
+      const all = await rows(db);
+      expect(all.filter(d => d._conflicts?.length)).toEqual([]);
+      // Whichever revision won, the edit is reachable: as the note itself or as a conflict copy.
+      const live = all.filter(d => !d.trashed && d.content === 'offline edit');
+      expect(live.length).toBe(1);
+    }
+  });
+
+  it('"Delete forever" on a note with a losing revision does not bring it back', async () => {
+    const [a, b, server] = three();
+    await on(a, () => putNote('z.md', 'base'));
+    await replicate(a, server); await replicate(b, server);
+    await on(a, () => deleteNote('z.md'));
+    await on(b, () => putNote('z.md', 'offline edit'));
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+    // Purge before any resolver ran: both leaves must go.
+    await on(a, () => purgeNote('z.md'));
+    await expect(a.get('z.md')).rejects.toMatchObject({ status: 404 });
+    await replicate(a, server); await replicate(b, server);
+    await expect(b.get('z.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('sweepTrash removes every revision of an expired note', async () => {
+    const [a, b, server] = three();
+    await on(a, () => putNote('s.md', 'base'));
+    await replicate(a, server); await replicate(b, server);
+    await on(a, async () => {
+      const doc = await getDB().get('s.md');
+      await getDB().put({ ...doc, trashed: true, trashedAt: new Date(Date.now() - 40 * 86400_000).toISOString() });
+    });
+    await on(b, async () => {
+      const doc = await getDB().get('s.md');
+      await getDB().put({ ...doc, trashed: true, trashedAt: new Date(Date.now() - 41 * 86400_000).toISOString(), content: 'other' });
+    });
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+    await on(a, () => sweepTrash());
+    await expect(a.get('s.md')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('a losing revision with the same text leaves no copy behind', async () => {
+    const [a, b, server] = three();
+    await on(a, () => putNote('e.md', 'base'));
+    await replicate(a, server); await replicate(b, server);
+    await on(a, () => putNote('e.md', 'same words'));
+    await new Promise(r => setTimeout(r, 5)); // different updatedAt → different rev
+    await on(b, () => putNote('e.md', 'same words'));
+    await replicate(a, server); await replicate(b, server); await replicate(a, server);
+    await resolveAll(a);
+    const all = await rows(a);
+    expect(all.filter(d => d.conflictOf)).toEqual([]);
+    expect(all.filter(d => d._conflicts?.length)).toEqual([]);
+  });
+});

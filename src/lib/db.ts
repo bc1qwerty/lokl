@@ -119,10 +119,16 @@ const PUT_MAX_RETRY = 25;
 export interface PutOptions {
   /** The _rev the editor loaded. If the stored doc has moved past it (a sync
    *  pulled a remote edit while the user was typing), the stored version is
-   *  kept as a conflict sibling instead of being silently overwritten. */
-  baseRev?: string;
+   *  kept as a conflict sibling instead of being silently overwritten.
+   *  A function is re-read on every attempt: the caller's idea of "the rev I
+   *  have" can advance while this write is retrying. */
+  baseRev?: string | (() => string | undefined);
   /** Carry the original creation time across a rename. */
   createdAt?: string;
+  /** The caller stopped waiting for this write (timeout) and has moved on. If
+   *  the write then loses a race (409) it must give up — retrying would put
+   *  this older text on top of whatever was saved since. */
+  abandoned?: () => boolean;
 }
 
 // Park a doc that is about to be overwritten under a sibling id. Deterministic
@@ -154,6 +160,7 @@ export async function putNote(id: string, content: string, opts: PutOptions = {}
       if (e.status !== 404) throw e;
     }
     const inTrash = !!existing && (!!existing.trashed || !!existing.deleted);
+    const baseRev = typeof opts.baseRev === 'function' ? opts.baseRev() : opts.baseRev;
     if (existing && inTrash) {
       // Reusing the name of a trashed note must not destroy the trash copy.
       await parkDoc(existing, 'trashed', {
@@ -161,7 +168,7 @@ export async function putNote(id: string, content: string, opts: PutOptions = {}
         trashedAt: existing.trashedAt ?? existing.updatedAt,
         deleted: undefined,
       });
-    } else if (existing && opts.baseRev && existing._rev !== opts.baseRev && existing.content !== content) {
+    } else if (existing && baseRev && existing._rev !== baseRev && existing.content !== content) {
       await parkDoc(existing, 'conflict', { conflictOf: id });
     }
     const doc: NoteDoc = {
@@ -178,6 +185,7 @@ export async function putNote(id: string, content: string, opts: PutOptions = {}
       const res = await getDB().put(doc);
       return res.rev;
     } catch (e: any) {
+      if (e.status === 409 && opts.abandoned?.()) throw new Error('putNote: superseded by a later save');
       if (e.status === 409 && attempt < PUT_MAX_RETRY - 1) {
         // Random jitter (0–9 ms) prevents all concurrent callers from
         // re-reading _rev at exactly the same tick and colliding again.
@@ -207,9 +215,18 @@ export async function restoreNote(id: string): Promise<void> {
   await getDB().put(rest);
 }
 
+// Remove EVERY leaf revision, not just the winner. A doc can carry losing
+// branches (a sync conflict not yet resolved — e.g. the other device edited the
+// note this one trashed). Removing only the winner promotes a loser: "Delete
+// forever" brought the note back, on every device.
+async function removeAllLeaves(id: string): Promise<void> {
+  const doc = await getDB().get(id, { conflicts: true }) as NoteDoc & { _rev: string; _conflicts?: string[] };
+  for (const rev of doc._conflicts ?? []) await getDB().remove(id, rev);
+  await getDB().remove(id, doc._rev);
+}
+
 export async function purgeNote(id: string): Promise<void> {
-  const doc = await getDB().get(id);
-  await getDB().remove(doc as NoteDoc & { _rev: string });
+  await removeAllLeaves(id);
 }
 
 export async function listTrash(): Promise<NoteDoc[]> {
@@ -235,7 +252,7 @@ export async function sweepTrash(now: number = Date.now()): Promise<void> {
     }
     // 2. Old trash → physical remove
     if (doc.trashed && doc.trashedAt && Date.parse(doc.trashedAt) < cutoff) {
-      await getDB().remove(doc as NoteDoc & { _rev: string });
+      await removeAllLeaves(doc._id);
     }
   }
 }
@@ -298,32 +315,64 @@ export async function listConflictSiblings(): Promise<NoteDoc[]> {
 }
 
 export async function listConflicts(): Promise<NoteDoc[]> {
+  // Trashed winners are included on purpose: when "trash" beats an offline edit
+  // made elsewhere, that edit sits in a losing revision. Skipping the doc hid it
+  // from everyone, with no conflict copy and no notice.
   const result = await getDB().allDocs({ include_docs: true, conflicts: true });
   return result.rows
     .map(r => r.doc as (NoteDoc & { _conflicts?: string[] }) | undefined)
-    .filter((d): d is NoteDoc & { _conflicts: string[] } => !!d && Array.isArray((d as any)._conflicts) && !d.trashed);
+    .filter((d): d is NoteDoc & { _conflicts: string[] } => !!d && Array.isArray((d as any)._conflicts) && (d as any)._conflicts.length > 0);
 }
 
+/**
+ * Turn the losing revisions of `id` into separate notes and drop them from the
+ * revision tree. Returns the ids of the copies it created.
+ *
+ * Every device resolves the same conflict on its own, at the same time. So each
+ * step must give the same result everywhere, or the copies themselves conflict
+ * and breed copies of copies (one conflict used to become dozens):
+ *  • the copy is written once, with fields taken only from the losing revision
+ *    — same id, same body → same first revision on every device;
+ *  • a copy that already exists is left alone;
+ *  • a losing revision that says nothing new (same text as the winner) is just
+ *    dropped — this is also what ends a conflict between two copies.
+ */
 export async function resolveConflict(id: string): Promise<string[]> {
-  // Returns the list of newly-created sibling ids ("(conflict-...)" notes).
   const winning = await getDB().get(id, { conflicts: true } as any) as NoteDoc & { _conflicts?: string[] };
-  const conflicts = (winning as any)._conflicts as string[] | undefined;
+  const conflicts = winning._conflicts;
   if (!conflicts?.length) return [];
+  const winningGone = !!winning.trashed || !!winning.deleted;
+  const base = id.replace(/\.md$/, '');
   const siblings: string[] = [];
   for (const rev of conflicts) {
     const losing = await getDB().get(id, { rev }) as NoteDoc;
-    const base = id.replace(/\.md$/, '');
-    // Deterministic sibling id (rev only, no local timestamp): every client
-    // resolving the same conflict computes the same id, so the second writer
-    // overwrites via putNote instead of duplicating the note.
-    const siblingId = `${base} (conflict-${rev}).md`;
-    await putNote(siblingId, losing.content);
-    const sibling = await getNote(siblingId);
-    if (sibling) {
-      await getDB().put({ ...sibling, conflictOf: id });
+    const losingGone = !!losing.trashed || !!losing.deleted;
+    const sameText = typeof losing.content !== 'string' || losing.content === winning.content;
+    if (!sameText || (winningGone && !losingGone)) {
+      // A live edit that lost (to another edit, or to a trash) becomes a
+      // conflict copy; a trashed version that lost stays in the trash.
+      const kind = losingGone ? 'trashed' : 'conflict';
+      const siblingId = `${base} (${kind}-${rev}).md`;
+      const copy: NoteDoc = {
+        _id: siblingId,
+        content: losing.content,
+        title: losing.title,
+        tags: losing.tags,
+        links: losing.links,
+        createdAt: losing.createdAt,
+        updatedAt: losing.updatedAt,
+        ...(losingGone
+          ? { trashed: true, trashedAt: losing.trashedAt ?? losing.updatedAt }
+          : { conflictOf: winning.conflictOf ?? id }),
+      };
+      try {
+        await getDB().put(copy);
+        siblings.push(siblingId);
+      } catch (e: any) {
+        if (e.status !== 409) throw e; // 409: the copy is already there
+      }
     }
     await getDB().remove(id, rev);
-    siblings.push(siblingId);
   }
   return siblings;
 }
