@@ -4,10 +4,10 @@ import {
   vault, fileTree, currentFilePath, openTabs,
   isDirty, sidebarOpen, backlinksOpen, viewMode, searchOpen,
   quickOpenOpen, settingsOpen, graphOpen, contextMenu,
-  isLoading, addTab, closeTab, settings,
+  isLoading, addTab, closeTab, settings, currentFileContent,
 } from './lib/store';
-import { saveStatus, startAutosave, flushPendingSave, showNote, noteRevSeen } from './lib/autosave';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename } from './lib/db';
+import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, applyChange, expectLocalRemoval } from './lib/autosave';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch } from './lib/db';
 import { updateLinksForFile } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 
@@ -93,10 +93,12 @@ export function App() {
   // PouchDB change feed (replaces 3s polling)
   useEffect(() => {
     const watcher = watchChanges((doc) => {
-      // While dirty the stored rev is deliberately not adopted: the next save then
-      // sees it moved and keeps the incoming version as a conflict copy.
-      if (doc._id === currentFilePath.value && !isDirty.value && !doc.trashed) {
-        showNote(doc._id, doc.content, doc._rev);
+      if (applyChange(doc) === 'closed') {
+        removeFromIndex(doc._id);
+        // The open note was removed elsewhere (another tab, another device):
+        // fall back to the last remaining tab instead of an editor with no note.
+        const rest = openTabs.value;
+        if (!currentFilePath.value && rest.length > 0) void handleFileClick(rest[rest.length - 1]);
       }
       // Rebuild file tree on any change
       listNotes().then(notes => {
@@ -104,16 +106,20 @@ export function App() {
       });
     });
     return () => watcher.cancel();
-  }, []);
+    // re-attach when the database handle is replaced (reopenDB)
+  }, [dbEpoch.value]);
 
   // Open file (with tab)
   const handleFileClick = useCallback(async (path: string) => {
     try {
-      // Unsaved edits belong to the note being left. If they can't be saved,
-      // stay on it rather than drop them.
-      if (!(await flushPendingSave())) return;
+      if (path === currentFilePath.value) { await settleOpenNote(); return; }
       const note = await getNote(path);
       if (!note) return;
+      // Unsaved edits belong to the note being left. If they can't be saved,
+      // stay on it rather than drop them. Nothing is awaited between the settle
+      // resolving clean and showNote below, so no keystroke can fall in between
+      // (the note was fetched first for that reason).
+      if (!(await settleOpenNote()) || isDirty.value) return;
       showNote(path, note.content, note._rev);
       addTab(path);
       saveStatus.value = 'clean';
@@ -127,7 +133,7 @@ export function App() {
   // note that became current.
   const handleTabClose = useCallback(async (path: string, opts: { save?: boolean } = {}) => {
     if (currentFilePath.value !== path) { closeTab(path); return; }
-    if (opts.save !== false && !(await flushPendingSave())) return;
+    if (opts.save !== false && !(await settleOpenNote())) return;
     showNote(null, '');
     closeTab(path);
     const rest = openTabs.value;
@@ -206,32 +212,51 @@ export function App() {
     if (!newName.endsWith('.md')) newName += '.md';
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = dir + newName;
+    // The old id's tombstone reaches the change feed while we are still here;
+    // it must not close the editor under us.
+    const done = expectLocalRemoval(oldPath);
     try {
-      if (currentFilePath.value === oldPath && !(await flushPendingSave())) return;
+      if (currentFilePath.value === oldPath && !(await settleOpenNote())) return;
       await atomicRename(oldPath, newPath);
       removeFromIndex(oldPath);
       const renamed = await getNote(newPath);
       if (renamed) indexFile(newPath, renamed.content);
+      renameOpen.value = false;
+      if (currentFilePath.value === oldPath && renamed) {
+        // Anything typed while the rename was running rides along as a draft
+        // of the renamed note instead of being dropped (or saved to the old id).
+        const draft = isDirty.value ? currentFileContent.value : undefined;
+        showNote(newPath, renamed.content, renamed._rev, draft);
+        closeTab(oldPath);
+        addTab(newPath);
+        saveStatus.value = draft === undefined ? 'clean' : 'dirty';
+      } else if (openTabs.value.includes(oldPath)) {
+        closeTab(oldPath);
+      }
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
-      renameOpen.value = false;
-      if (currentFilePath.value === oldPath) {
-        showNote(null, '');
-        closeTab(oldPath);
-        await handleFileClick(newPath);
-      }
     } catch (e: any) {
       console.error('Rename failed:', e);
       toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
+    } finally {
+      done();
     }
   }, [handleFileClick]);
 
   const handleDelete = useCallback(async (path: string) => {
     if (!confirm(`Delete "${path.split('/').pop()}"?`)) return;
     try {
+      if (currentFilePath.value === path) {
+        // Land the latest text first so the trash copy is complete, then empty
+        // the editor BEFORE trashing: a debounce left pending here used to fire
+        // after the delete and bring the note back.
+        if (!(await settleOpenNote())) return;
+        await handleTabClose(path, { save: false });
+      } else if (openTabs.value.includes(path)) {
+        closeTab(path);
+      }
       await deleteNote(path);
       removeFromIndex(path);
-      await handleTabClose(path, { save: false });
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
     } catch (e: any) {

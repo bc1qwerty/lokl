@@ -112,3 +112,61 @@ describe('paused with an error is not "synced"', () => {
     expect(syncState.value.lastSynced).toBeInstanceOf(Date);
   });
 });
+
+// The unit test above calls onPaused directly, which is how a dead wire went
+// unnoticed: db.sync() re-emits 'paused' without the error, so the handler on
+// the sync object never saw one and every outage read as "Synced".
+describe('a failing replication reaches the sync state through the real events', () => {
+  async function until(cond: () => boolean, ms = 4000) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (cond()) return;
+      await new Promise(r => setTimeout(r, 20));
+    }
+    throw new Error(`condition not met; state=${JSON.stringify(syncState.value)}`);
+  }
+
+  it('a rejected push shows an error and never stamps lastSynced', async () => {
+    const remoteDB = freshDB('remote-fail') as unknown as PouchDB.Database<NoteDoc>;
+    (remoteDB as any).bulkDocs = () => Promise.reject({ status: 500, name: 'unknown', message: 'boom' });
+    __setRemoteFactory(() => remoteDB);
+    await putNote('f.md', 'cannot leave');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    expect(syncState.value.error).toBe('Sync failed — will retry');
+    expect(syncState.value.lastSynced).toBeUndefined();
+  });
+
+  it('the 50MB limit (413 STORAGE_LIMIT) is named, not shown as a generic failure', async () => {
+    const remoteDB = freshDB('remote-full') as unknown as PouchDB.Database<NoteDoc>;
+    (remoteDB as any).bulkDocs = () =>
+      Promise.reject({ status: 413, name: 'too_large', code: 'STORAGE_LIMIT', message: 'Storage limit reached (50MB).' });
+    __setRemoteFactory(() => remoteDB);
+    await putNote('g.md', 'over quota');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    expect(syncState.value.error).toMatch(/storage full/i);
+  });
+
+  it('recovers to synced once the remote accepts writes again', async () => {
+    const remoteDB = freshDB('remote-recover') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    let fail = true;
+    (remoteDB as any).bulkDocs = (...a: unknown[]) =>
+      fail ? Promise.reject({ status: 503, name: 'unknown', message: 'down' }) : (real as any)(...a);
+    __setRemoteFactory(() => remoteDB);
+    await putNote('h.md', 'later');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    fail = false;
+    await until(() => syncState.value.status === 'synced', 15000);
+    expect(((await remoteDB.get('h.md')) as any).content).toBe('later');
+  }, 20000);
+
+  it('a clean sync still ends up synced', async () => {
+    await putNote('i.md', 'fine');
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    expect(syncState.value.lastSynced).toBeInstanceOf(Date);
+  });
+});

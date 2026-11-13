@@ -1,6 +1,6 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { listConflictSiblings, deleteNote } from '../lib/db';
+import { listConflictSiblings, deleteNote, getDB } from '../lib/db';
 import type { NoteDoc } from '../lib/db';
 import { t } from '../i18n';
 
@@ -49,7 +49,12 @@ export function ConflictPanel({ onOpen }: Props) {
               {c.conflictOf && (
                 <button
                   class="conflict-open-orig"
-                  onClick={() => onOpen(c.conflictOf!)}
+                  onClick={async () => {
+                    // Read the pointer now: a rename since the last poll moved it.
+                    let target = c.conflictOf!;
+                    try { target = (await getDB().get(c._id)).conflictOf ?? target; } catch { /* use the listed one */ }
+                    onOpen(target);
+                  }}
                   title={c.conflictOf}
                 >
                   {str.openOriginal}

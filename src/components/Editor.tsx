@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'preact/hooks';
-import { useSignalEffect } from '@preact/signals';
+import { effect, useSignalEffect } from '@preact/signals';
 import { EditorView, keymap, ViewPlugin, Decoration, type DecorationSet, type ViewUpdate, lineNumbers } from '@codemirror/view';
 import { EditorState, Compartment, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -86,17 +86,26 @@ export function Editor() {
     return () => { view.destroy(); viewRef.current = null; };
   }, []);
 
-  // Sync document when file changes
-  useSignalEffect(() => {
-    const view = viewRef.current;
+  // Swap the document when a note is put into the editor (showNote sets path,
+  // savedContent and currentFileContent together).
+  //  • The document mirrors currentFileContent — NOT savedContent: a finished
+  //    save sets savedContent to the text as of when the save started, and
+  //    copying that back here erased whatever was typed during the write.
+  //  • A plain effect(), not useSignalEffect: that one waits for the next frame,
+  //    and a keystroke landing in between went into the previous note's
+  //    document while currentFilePath already named the new note — the old
+  //    note's whole text was then saved under the new one.
+  useEffect(() => effect(() => {
     const path = currentFilePath.value;
-    const content = savedContent.value;
+    void savedContent.value; // re-run when a note is (re)loaded
+    const view = viewRef.current;
+    const content = currentFileContent.peek();
     if (!view || path === null) return;
     const current = view.state.doc.toString();
     if (current !== content) {
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
     }
-  });
+  }), []);
 
   // Sync theme
   useSignalEffect(() => {

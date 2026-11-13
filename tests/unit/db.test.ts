@@ -295,3 +295,16 @@ describe('overwrite safety', () => {
     expect((await getDB().get('a.md'))._rev).toBe(rev);
   });
 });
+
+describe('atomicRename and conflict copies', () => {
+  it('re-points conflict copies at the renamed note', async () => {
+    await putNote('orig.md', 'body');
+    await putNote('orig (conflict-1-abc).md', 'other body');
+    const sib = await getDB().get('orig (conflict-1-abc).md');
+    await getDB().put({ ...sib, conflictOf: 'orig.md' });
+    await atomicRename('orig.md', 'renamed.md');
+    const siblings = await listConflictSiblings();
+    expect(siblings.map(s => s.conflictOf)).toEqual(['renamed.md']);
+    expect(siblings[0].content).toBe('other body');
+  });
+});

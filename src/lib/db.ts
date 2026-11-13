@@ -1,4 +1,5 @@
 import PouchDB from 'pouchdb-browser';
+import { signal } from '@preact/signals';
 import type { FileEntry } from '../types';
 
 export interface NoteDoc {
@@ -20,11 +21,35 @@ export interface NoteDoc {
 }
 
 let db: PouchDB.Database<NoteDoc>;
+let dbName = 'lokl';
+
+/** Bumped when the database handle is replaced; long-lived listeners (change
+ *  feed, sync) watch it and re-attach to the new handle. */
+export const dbEpoch = signal(0);
 
 export function initDB(name = 'lokl'): PouchDB.Database<NoteDoc> {
   if (!db) {
+    dbName = name;
     db = new PouchDB<NoteDoc>(name);
   }
+  return db;
+}
+
+/** True for the errors a dead IndexedDB connection produces. The browser can
+ *  close it under us (storage pressure, an aborted transaction PouchDB treats
+ *  as fatal); from then on every read and write on that handle fails. */
+export function isConnectionLost(e: unknown): boolean {
+  const err = e as { name?: string; message?: string } | null;
+  const text = `${err?.name ?? ''} ${err?.message ?? ''}`;
+  return /InvalidStateError|connection is closing|database connection|indexed_db_went_bad/i.test(text);
+}
+
+/** Replace a dead handle with a fresh connection to the same database. */
+export function reopenDB(): PouchDB.Database<NoteDoc> {
+  const old = db;
+  db = new PouchDB<NoteDoc>(dbName);
+  try { void (old as any)?.close?.().catch(() => undefined); } catch { /* already dead */ }
+  dbEpoch.value++;
   return db;
 }
 
@@ -35,6 +60,7 @@ export function getDB(): PouchDB.Database<NoteDoc> {
 
 export function setDB(instance: PouchDB.Database<NoteDoc>): void {
   db = instance;
+  dbName = (instance as unknown as { name: string }).name ?? dbName;
 }
 
 // Extract title from markdown content
@@ -322,6 +348,16 @@ export async function atomicRename(oldPath: string, newPath: string): Promise<vo
   } catch (e) {
     try { await purgeNote(newPath); } catch { /* best-effort rollback */ }
     throw e;
+  }
+
+  // Conflict copies point at their original by id. Left on the old id, "open
+  // original" on them did nothing after a rename.
+  try {
+    for (const sibling of await listConflictSiblings()) {
+      if (sibling.conflictOf === oldPath) await getDB().put({ ...sibling, conflictOf: newPath });
+    }
+  } catch (e) {
+    console.error('Re-pointing conflict copies failed:', e);
   }
 }
 

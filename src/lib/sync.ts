@@ -1,6 +1,7 @@
 import PouchDB from 'pouchdb-browser';
 import { getDB, listConflicts, resolveConflict, type NoteDoc } from './db';
 import { syncState, type SyncStatus } from './store';
+import { toast } from './toast';
 
 let conflictResolverRunning = false;
 let conflictResolverPending = false;
@@ -42,14 +43,54 @@ function updateSyncState(status: SyncStatus, error?: string) {
   };
 }
 
+/** What a replication error means for the user. */
+export function describeSyncError(err: unknown): string {
+  const e = err as { status?: number; code?: string } | null | undefined;
+  if (e?.status === 413 && e.code === 'STORAGE_LIMIT') return 'Sync storage full (50MB) — delete notes to resume';
+  if (e?.status === 413) return 'A note is too large to sync';
+  if (e?.status === 401) return 'Session expired';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'Offline — will retry';
+  return 'Sync failed — will retry';
+}
+
 // With retry:true a network failure or 5xx arrives as paused(err), not as
 // 'error' — reporting it as synced would stamp lastSynced while nothing is
 // reaching the server.
 export function onPaused(err?: unknown): void {
   if (err || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
-    updateSyncState('error', 'Offline — will retry');
+    const msg = describeSyncError(err);
+    // The status dot is easy to miss; a full sync quota means edits stop
+    // leaving this device, so say it once when it starts.
+    if (msg.startsWith('Sync storage full') && syncState.value.error !== msg) toast.error(msg);
+    updateSyncState('error', msg);
   } else {
     updateSyncState('synced');
+  }
+}
+
+// db.sync() re-emits 'paused' WITHOUT the error (pouchdb-browser 9: `this.emit('paused')`);
+// the error only reaches the listeners of the push/pull replications underneath.
+// So the state is derived from those two, not from the sync-level event.
+interface Direction { paused: boolean; err: unknown }
+type Replication = { on(event: string, cb: (arg?: unknown) => void): unknown };
+
+function watchDirections(handler: unknown): void {
+  const { push, pull } = handler as { push?: Replication; pull?: Replication };
+  if (!push || !pull) return;
+  const dirs: Record<'push' | 'pull', Direction> = {
+    push: { paused: false, err: null },
+    pull: { paused: false, err: null },
+  };
+  const recompute = () => {
+    if (handler !== syncHandler) return; // a cancelled sync must not move the state
+    const err = dirs.push.err ?? dirs.pull.err;
+    if (err) onPaused(err);
+    else if (dirs.push.paused && dirs.pull.paused) onPaused();
+    else updateSyncState('syncing');
+  };
+  for (const [name, rep] of [['push', push], ['pull', pull]] as const) {
+    rep.on('paused', (err) => { dirs[name] = { paused: true, err: err ?? null }; recompute(); });
+    rep.on('active', () => { dirs[name] = { paused: false, err: null }; recompute(); });
   }
 }
 
@@ -68,19 +109,12 @@ export function startSync(): void {
 
   updateSyncState('syncing');
 
-  syncHandler = localDB.sync(remoteDB, {
+  const handler = localDB.sync(remoteDB, {
     live: true,
     retry: true,
   })
     .on('change', () => {
-      updateSyncState('syncing');
       resolveAllConflicts().catch(err => console.error('Conflict resolve failed:', err));
-    })
-    .on('paused', (err?: unknown) => {
-      onPaused(err);
-    })
-    .on('active', () => {
-      updateSyncState('syncing');
     })
     .on('denied', (err) => {
       console.error('Sync denied:', err);
@@ -91,6 +125,8 @@ export function startSync(): void {
       const msg = (err as any)?.status === 401 ? 'Session expired' : 'Sync failed';
       updateSyncState('error', msg);
     }) as unknown as PouchDB.Replication.Sync<NoteDoc>;
+  syncHandler = handler;
+  watchDirections(handler);
 }
 
 export function stopSync(): void {

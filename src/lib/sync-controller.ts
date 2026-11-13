@@ -6,6 +6,7 @@
 import { effect } from '@preact/signals';
 import { authState } from './store';
 import { startSync, stopSync } from './sync';
+import { dbEpoch } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
@@ -51,6 +52,8 @@ export function initSyncController(): () => void {
     // 잡혀 signals 가 "Cycle detected" 를 던진다 — 마이크로태스크로 미뤄
     // effect 추적 밖에서 실행한다.
     void authState.value.status;
+    // …and the database handle: a replaced handle (reopenDB) needs a new sync.
+    void dbEpoch.value;
     queueMicrotask(() => { void evaluate(); });
   });
   // 구독 확인 fetch 순단(오프라인 기동·api 순단)이 '구독 없음'으로 그 세션

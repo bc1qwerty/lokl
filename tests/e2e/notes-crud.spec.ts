@@ -93,96 +93,11 @@ test('create → edit → save → reload, content survives', async ({ page }) =
   await expect(page.locator('.cm-content')).toContainText(uniqueContent, { timeout: 8_000 });
 });
 
-// ─── TEST 2: conflict doc with conflictOf set surfaces ConflictPanel ─────────
-//
-// window.PouchDB is not exposed globally (bundled as ES module) and the
-// idb-next internal object store format is fragile to depend on.
-//
-// The ConflictPanel renders when listNotes() returns any doc with `conflictOf`
-// set. PouchDB's idb adapter stores data in "_pouch_lokl" IDB database.
-// We inject a minimal conflict sibling using the raw IDB API with the exact
-// document shape PouchDB expects for the idb-next adapter ("docs" objectStore).
-//
-// If injection fails for any reason (adapter variant mismatch), the test is
-// marked .skip() with a TODO. The A1-A4 conflict logic is covered by unit
-// tests in tests/unit/.
-
-test('conflict doc with conflictOf set surfaces ConflictPanel', async ({ page }) => {
-  await freshStart(page);
-
-  await createNote(page, 'conflict-note');
-  await page.waitForTimeout(500);
-
-  // Attempt to inject a sibling conflict doc via raw IndexedDB
-  const injected = await page.evaluate(async (noteId: string) => {
-    const siblingId = `conflict-note (conflict-fake-001).md`;
-    const now = new Date().toISOString();
-
-    return new Promise<boolean>((resolve) => {
-      const req = indexedDB.open('_pouch_lokl');
-      req.onerror = () => resolve(false);
-      req.onsuccess = () => {
-        const idb = req.result;
-        const storeNames = Array.from(idb.objectStoreNames);
-
-        // idb-next adapter uses "docs" store; classic adapter uses "by-sequence"
-        if (!storeNames.includes('docs')) {
-          idb.close();
-          resolve(false);
-          return;
-        }
-
-        // idb-next format: each record has { id, rev, body, seq, deleted, local }
-        // body is the raw document JSON string or object (depends on PouchDB version)
-        const tx = idb.transaction('docs', 'readwrite');
-        const store = tx.objectStore('docs');
-
-        // Read existing sequence counter
-        const countReq = store.count();
-        countReq.onsuccess = () => {
-          const seq = countReq.result + 100; // avoid seq collision
-          const rev = '1-aabbccdd00000000fake001000000001';
-          const body = {
-            _id: siblingId,
-            _rev: rev,
-            content: '# Conflicting version\n',
-            title: 'Conflicting version',
-            tags: [],
-            links: [],
-            conflictOf: noteId,
-            createdAt: now,
-            updatedAt: now,
-          };
-          const putReq = store.put({
-            id: siblingId,
-            rev,
-            body,
-            seq,
-            deleted: false,
-            local: false,
-          });
-          putReq.onsuccess = () => { idb.close(); resolve(true); };
-          putReq.onerror = () => { idb.close(); resolve(false); };
-        };
-        countReq.onerror = () => { idb.close(); resolve(false); };
-      };
-    });
-  }, 'conflict-note.md');
-
-  if (!injected) {
-    // TODO: IDB adapter format mismatch — replace with a sync-based approach
-    // once a CouchDB/PouchDB sync server fixture is available. The conflict
-    // detection logic (A1-A4) is covered by tests/unit/db.test.ts.
-    test.skip();
-    return;
-  }
-
-  // Force the app to re-scan by navigating away and back (triggers listNotes)
-  // ConflictPanel also polls every 3 000 ms — wait up to 7 s
-  await expect(page.locator('.conflict-panel')).toBeVisible({ timeout: 7_000 });
-  await expect(page.locator('.conflict-panel-header')).toContainText('Conflicts');
-  await expect(page.locator('.conflict-list')).toContainText('conflict-fake-001');
-});
+// ─── TEST 2 moved ───────────────────────────────────────────────────────────
+// The ConflictPanel test lived here and injected a doc through raw IndexedDB,
+// guessing at PouchDB's object store layout. The guess was wrong for the
+// adapter in use, so it hit its own test.skip() on every run. It now produces a
+// real conflict copy with two tabs — see data-safety.spec.ts.
 
 // ─── TEST 3: rapid-fire 10 edits, all persist without lock errors ─────────
 //
