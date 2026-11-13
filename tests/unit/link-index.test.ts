@@ -77,6 +77,25 @@ describe('link resolution', () => {
     expect(resolveWikiLink('missing')).toBeNull();
   });
 
+  it('a different-case spelling resolves only when exactly one note matches; exact spelling wins', () => {
+    setPaths(['Projects/Plan.md', 'todo.md', 'Todo.md', 'solo.md']);
+    expect(resolveWikiLink('plan')).toBe('Projects/Plan.md');
+    expect(resolveWikiLink('projects/plan')).toBe('Projects/Plan.md');
+    expect(resolveWikiLink('SOLO')).toBe('solo.md');
+    expect(resolveWikiLink('Todo')).toBe('Todo.md');   // exact
+    expect(resolveWikiLink('todo')).toBe('todo.md');   // exact
+    expect(resolveWikiLink('TODO')).toBeNull();        // two candidates — do not guess
+  });
+
+  it('[[Note#Heading]] opens the note; a note literally named with "#" still wins', () => {
+    setPaths(['guide.md', 'a#b.md']);
+    expect(resolveWikiLink('guide#Install')).toBe('guide.md');
+    expect(resolveWikiLink('Guide#Install|how to')).toBe('guide.md');
+    expect(resolveWikiLink('a#b')).toBe('a#b.md');
+    expect(resolveWikiLink('missing#x')).toBeNull();
+    expect(resolveWikiLink('#only-heading')).toBeNull();
+  });
+
   it('a link to a name that began with "_" finds the note stored under "-"', () => {
     // import turns _index.md into -index.md; [[_index]] written before must still open it
     setPaths(['-index.md', '-templates/daily.md', 'a.md']);

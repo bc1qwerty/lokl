@@ -6,18 +6,28 @@ import { toast } from './toast';
 let conflictResolverRunning = false;
 let conflictResolverPending = false;
 
-async function resolveAllConflicts(): Promise<void> {
+export async function resolveAllConflicts(): Promise<void> {
   if (conflictResolverRunning) {
     conflictResolverPending = true;
     return;
   }
   conflictResolverRunning = true;
   try {
+    // A branch that keeps answering 404/409 must not spin this loop forever; the next
+    // change event starts a fresh pass anyway.
+    let contested = 0;
     do {
       conflictResolverPending = false;
       const conflicts = await listConflicts();
       for (const c of conflicts) {
-        await resolveConflict(c._id);
+        // One note failing must not abandon the rest (and the pending re-run with them).
+        // 404/409 = another device or tab settled the same branch first — look again.
+        try {
+          await resolveConflict(c._id);
+        } catch (e: any) {
+          if (e?.status === 404 || e?.status === 409) { if (++contested <= 5) conflictResolverPending = true; }
+          else console.error('Conflict resolve failed:', c._id, e);
+        }
       }
     } while (conflictResolverPending);
   } finally {

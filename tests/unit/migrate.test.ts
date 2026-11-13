@@ -142,6 +142,42 @@ describe('migrate.importFromFSAA into a vault that already has notes', () => {
     expect(describeImport(report)).toMatch(/1 already in the vault\. 1 differ.*kept as conflict copies: n1\.md/);
   });
 
+  // The copy's id used to carry a timestamp and a random suffix: two devices importing the
+  // same folder each made their own, and after syncing the vault held one copy per device.
+  it('two devices importing the same folder write the very same conflict copy', async () => {
+    const run = async () => {
+      setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>);
+      await putNote('n1.md', 'written in the app');
+      const report = await importFromFSAA(wrapAsFSAA(folder({ 'n1.md': 'older text from the folder' })));
+      const doc = await getDB().get(report.conflicts[0].keptAs);
+      return { id: doc._id, rev: doc._rev, db: getDB() };
+    };
+    const a = await run();
+    await new Promise((r) => setTimeout(r, 5));   // a later clock must not change the copy
+    const b = await run();
+    expect(b.id).toBe(a.id);
+    expect(b.rev).toBe(a.rev);
+
+    // replicate device A into device B: still exactly one copy, and nothing in conflict
+    await a.db.replicate.to(b.db);
+    const copies = await listConflictSiblings();
+    expect(copies.map((c) => c._id)).toEqual([a.id]);
+    expect((await b.db.get(a.id, { conflicts: true }))._conflicts ?? []).toEqual([]);
+  });
+
+  it('a different text for the same note gets its own copy; an edited copy is never written over', async () => {
+    await putNote('n1.md', 'written in the app');
+    const first = await importFromFSAA(wrapAsFSAA(folder({ 'n1.md': 'folder text one' })));
+    const second = await importFromFSAA(wrapAsFSAA(folder({ 'n1.md': 'folder text two' })));
+    expect(second.conflicts[0].keptAs).not.toBe(first.conflicts[0].keptAs);
+
+    const kept = await getDB().get(first.conflicts[0].keptAs);
+    await getDB().put({ ...kept, content: 'edited by the user' });
+    const again = await importFromFSAA(wrapAsFSAA(folder({ 'n1.md': 'folder text one' })));
+    expect(again.conflicts).toEqual([]);
+    expect((await getDB().get(first.conflicts[0].keptAs)).content).toBe('edited by the user');
+  });
+
   it('running the same import again changes nothing and adds no second copy', async () => {
     await putNote('n1.md', 'written in the app');
     const dir = folder({ 'n1.md': 'from the folder', 'a.md': 'A', '_i.md': 'I' });

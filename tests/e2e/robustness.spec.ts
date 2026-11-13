@@ -246,3 +246,35 @@ test('"Delete forever" on a trash row names the note and asks first', async ({ p
   expect(await noteIds(page)).toEqual(['keepme.md']);
 });
 
+
+// A dialog taller than the window used to be cut off at the bottom with no way to scroll:
+// on a 720px-high laptop the last Settings buttons — "Import from folder", the one way to
+// finish an interrupted import — could not be reached with a mouse.
+for (const size of [{ width: 1280, height: 720 }, { width: 1280, height: 600 }, { width: 390, height: 600 }]) {
+  test(`every Settings control can be reached at ${size.width}×${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await freshStart(page);
+    await openSettings(page);
+    const dialog = page.locator('.settings-dialog');
+
+    const box = (await dialog.boundingBox())!;
+    expect(box.y + box.height).toBeLessThanOrEqual(size.height);
+    expect(box.x + box.width).toBeLessThanOrEqual(size.width);
+
+    const controls = dialog.locator('button, select, input');
+    const n = await controls.count();
+    expect(n).toBeGreaterThan(5);
+    for (let i = 0; i < n; i++) {
+      const el = controls.nth(i);
+      if (!(await el.isVisible())) continue;
+      await el.scrollIntoViewIfNeeded();
+      // really on screen and on top — not merely "in the DOM"
+      const hit = await el.evaluate((node) => {
+        const r = node.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return r.top >= 0 && r.bottom <= window.innerHeight && !!top && (top === node || node.contains(top) || top.contains(node));
+      });
+      expect(hit, `control #${i} (${(await el.textContent())?.trim() || (await el.getAttribute('type'))})`).toBe(true);
+    }
+  });
+}

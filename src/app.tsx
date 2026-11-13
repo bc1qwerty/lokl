@@ -12,7 +12,7 @@ import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
 import { normalizeNotePath } from './lib/note-path';
-import { interruptedImport, clearInterruptedImport } from './lib/migrate';
+import { interruptedImport, clearInterruptedImport, rememberInterruptedToast } from './lib/migrate';
 
 import { startQuotaMonitor } from './lib/quota';
 import { initSyncController } from './lib/sync-controller';
@@ -73,11 +73,12 @@ export function App() {
     // vault is partial and used to open as if it were whole.
     void interruptedImport().then((cut) => {
       if (!cut) return;
-      toast.warning(
+      const reminder = toast.warning(
         `A folder import was interrupted after about ${cut.done} of ${cut.total} files. `
         + 'Open Settings → "Import from folder" and pick the same folder to finish — notes already imported are skipped.',
         { ttl: 120_000, action: { label: "Don't remind me", handler: clearInterruptedImport } },
       );
+      rememberInterruptedToast(reminder);
     });
     sweepTrash().catch(e => console.error('sweepTrash failed:', e));
     const stop = startQuotaMonitor();

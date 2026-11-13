@@ -1,7 +1,7 @@
 import { putNote, listNotes, getDB } from './db';
 import type { NoteDoc } from './db';
 import { safeNoteId } from './note-path';
-import { toast } from './toast';
+import { toast, dismiss } from './toast';
 
 const TMP_SUFFIX = '.lokl-tmp';
 
@@ -105,6 +105,13 @@ export function clearInterruptedImport(): void {
   markProgress(null);
 }
 
+// The "import was interrupted" reminder shown at startup. Once an import runs to the
+// end the reminder is stale, so it is taken down instead of lingering for its two minutes.
+let interruptedToast: string | null = null;
+export function rememberInterruptedToast(id: string): void {
+  interruptedToast = id;
+}
+
 let importsRunning = 0;
 /** True while a folder import is writing — the page should not be closed. */
 export function importRunning(): boolean {
@@ -176,17 +183,23 @@ async function importFiles(
         } else if (existing.content === content || alreadyKept.has(`${id}\u0000${content}`)) {
           report.unchanged++;
         } else {
-          const ts = new Date().toISOString().replace(/[:.]/g, '-');
-          const rand = Math.random().toString(36).slice(2, 8);
-          const keptAs = `${id.replace(/\.md$/, '')} (conflict-${ts}-${rand}).md`;
-          const now = new Date().toISOString();
-          await getDB().put({
-            _id: keptAs, content, conflictOf: id,
-            title: path.split('/').pop()!.replace(MARKDOWN_EXT, ''), tags: [], links: [],
-            createdAt: now, updatedAt: now,
-          });
+          // The copy's id and fields come from the text alone, so two devices importing the same
+          // folder write the very same document (same id, same revision) instead of one copy each.
+          const keptAs = `${id.replace(/\.md$/, '')} (conflict-import-${contentHash(content)}).md`;
+          const kept = await rawGet(keptAs);
+          if (kept) {
+            // Already kept by an earlier run or another device — or since edited or binned by
+            // the user. Either way it is theirs now; never write over it.
+            report.unchanged++;
+          } else {
+            await getDB().put({
+              _id: keptAs, content, conflictOf: id,
+              title: path.split('/').pop()!.replace(MARKDOWN_EXT, ''), tags: [], links: [],
+              createdAt: IMPORT_COPY_STAMP, updatedAt: IMPORT_COPY_STAMP,
+            });
+            report.conflicts.push({ path, keptAs });
+          }
           alreadyKept.add(`${id}\u0000${content}`);
-          report.conflicts.push({ path, keptAs });
         }
       } catch (e: any) {
         report.skipped.push({ path, reason: e?.message ?? String(e) });
@@ -197,11 +210,28 @@ async function importFiles(
     }
     // Ran to the end: nothing was interrupted (skipped files are in the report).
     markProgress(null);
+    if (interruptedToast) { dismiss(interruptedToast); interruptedToast = null; }
   } finally {
     if (guarded && --importsRunning === 0) window.removeEventListener('beforeunload', warnBeforeUnload);
   }
 
   return report;
+}
+
+// Fixed so the copy is byte-identical wherever it is written (see above).
+const IMPORT_COPY_STAMP = '1970-01-01T00:00:00.000Z';
+
+// cyrb53 — a short, stable, non-cryptographic hash; only has to tell texts apart within one note's copies.
+function contentHash(text: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
 }
 
 async function rawGet(id: string): Promise<NoteDoc | null> {

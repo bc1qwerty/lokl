@@ -39,21 +39,33 @@ interface Resolver {
   exact: Set<string>;
   byName: Map<string, string>;    // "note"        -> first path whose file name is note.md
   bySuffix: Map<string, string>;  // "dir/note.md" -> first path ending in /dir/note.md
+  // Case-insensitive fallbacks. `null` = more than one note matches, so the link stays
+  // unresolved rather than opening an arbitrary one.
+  lowerExact: Map<string, string | null>;
+  lowerName: Map<string, string | null>;
+}
+
+function addUnique(m: Map<string, string | null>, key: string, path: string): void {
+  m.set(key, m.has(key) && m.get(key) !== path ? null : path);
 }
 
 function buildResolver(paths: string[]): Resolver {
   const exact = new Set(paths);
   const byName = new Map<string, string>();
   const bySuffix = new Map<string, string>();
+  const lowerExact = new Map<string, string | null>();
+  const lowerName = new Map<string, string | null>();
   for (const p of paths) {
     const name = (p.split('/').pop() ?? '').replace(/\.md$/, '');
     if (!byName.has(name)) byName.set(name, p);
+    addUnique(lowerExact, p.toLowerCase(), p);
+    addUnique(lowerName, name.toLowerCase(), p);
     for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) {
       const suffix = p.slice(i + 1);
       if (!bySuffix.has(suffix)) bySuffix.set(suffix, p);
     }
   }
-  return { exact, byName, bySuffix };
+  return { exact, byName, bySuffix, lowerExact, lowerName };
 }
 
 let cachedPaths: string[] | null = null;
@@ -72,14 +84,30 @@ function lookup(r: Resolver, target: string): string | null {
   return r.byName.get(target) ?? r.bySuffix.get(withExt) ?? null;
 }
 
-function resolveWith(r: Resolver, linkText: string): string | null {
-  const target = linkText.split('|')[0].trim();
+function lookupAnyCase(r: Resolver, target: string): string | null {
+  const lower = target.toLowerCase();
+  const withExt = lower.endsWith('.md') ? lower : `${lower}.md`;
+  return r.lowerExact.get(withExt) ?? r.lowerName.get(lower.replace(/\.md$/, '')) ?? null;
+}
+
+function resolveTarget(r: Resolver, target: string): string | null {
   const hit = lookup(r, target);
   if (hit) return hit;
   // A note whose name began with "_" is stored with "-" instead (PouchDB cannot
   // hold "_" ids). Links written against the old name — [[_index]] — must keep working.
   const safe = safeNoteId(target);
-  return safe !== target ? lookup(r, safe) : null;
+  const viaSafe = safe !== target ? lookup(r, safe) : null;
+  // Exact spelling always wins; a different-case spelling resolves only when exactly one note matches.
+  return viaSafe ?? lookupAnyCase(r, target);
+}
+
+function resolveWith(r: Resolver, linkText: string): string | null {
+  const target = linkText.split('|')[0].trim();
+  const hit = resolveTarget(r, target);
+  if (hit) return hit;
+  // [[Note#Heading]] opens the note (a note literally named "a#b" was tried above and wins).
+  const hash = target.indexOf('#');
+  return hash > 0 ? resolveTarget(r, target.slice(0, hash).trim()) : null;
 }
 
 export function resolveWikiLink(linkText: string): string | null {
