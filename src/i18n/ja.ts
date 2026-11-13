@@ -127,7 +127,7 @@ const ja: Locale = {
   trash: {
     title: 'Trash',
     restore: 'restore',
-    deleteForever: 'delete forever',
+    deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.',
     empty: 'Trash is empty',
   },
 };

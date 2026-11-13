@@ -1,5 +1,7 @@
-import { putNote, listNotes } from './db';
+import { putNote, listNotes, getDB } from './db';
+import type { NoteDoc } from './db';
 import { safeNoteId } from './note-path';
+import { toast } from './toast';
 
 const TMP_SUFFIX = '.lokl-tmp';
 
@@ -49,54 +51,185 @@ export function markMigrated(): void {
 
 export interface ImportReport {
   imported: number;
+  /** Already in the vault with the same text — nothing to do (a re-run after an interrupted import). */
+  unchanged: number;
+  /** A note of that name already exists with different text: the vault's note stays, the file is kept as a conflict copy. */
+  conflicts: Array<{ path: string; keptAs: string }>;
   /** Files that could not be stored, with the reason — never dropped silently. */
   skipped: Array<{ path: string; reason: string }>;
   /** Files stored under another id because the original one cannot be a note id. */
   renamed: Array<{ from: string; to: string }>;
 }
 
-// Import all .md files from a FSAA directory into PouchDB.
-// One bad file must not end the import: it used to throw out of the loop on the
-// first "_index.md" (PouchDB refuses ids starting with "_"), leaving a partial
-// vault that looked complete.
-export async function importFromFSAA(
+// An import that never finished (tab closed, reload, crash) used to leave a
+// partial vault that opened as if complete. The marker survives the page; the
+// app reports it on the next start (see takeInterruptedImport).
+const PROGRESS_KEY = 'lokl_import_progress';
+
+export interface ImportProgress { done: number; total: number }
+
+function markProgress(p: ImportProgress | null): void {
+  try {
+    if (p) localStorage.setItem(PROGRESS_KEY, JSON.stringify(p));
+    else localStorage.removeItem(PROGRESS_KEY);
+  } catch { /* private mode: the import itself still works */ }
+}
+
+// Held for as long as an import is writing; released by the browser when its
+// page goes away. Lets another tab tell "still running over there" from "cut short".
+const IMPORT_LOCK = 'lokl-folder-import';
+type LockManagerLike = {
+  request<T>(name: string, fn: () => Promise<T>): Promise<T>;
+  query(): Promise<{ held?: Array<{ name?: string }> }>;
+};
+const lockManager = (): LockManagerLike | undefined =>
+  (typeof navigator !== 'undefined' ? (navigator as unknown as { locks?: LockManagerLike }).locks : undefined);
+
+/** The import a previous page left unfinished, if any (not one that is still running in another tab). */
+export async function interruptedImport(): Promise<ImportProgress | null> {
+  let found: ImportProgress | null = null;
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    if (typeof p?.done === 'number' && typeof p?.total === 'number') found = { done: p.done, total: p.total };
+  } catch { /* unreadable marker: nothing to report */ }
+  if (!found) return null;
+  try {
+    const state = await lockManager()?.query();
+    if (state?.held?.some((l) => l.name === IMPORT_LOCK)) return null;
+  } catch { /* no lock information: report what the marker says */ }
+  return found;
+}
+
+export function clearInterruptedImport(): void {
+  markProgress(null);
+}
+
+let importsRunning = 0;
+/** True while a folder import is writing — the page should not be closed. */
+export function importRunning(): boolean {
+  return importsRunning > 0;
+}
+function warnBeforeUnload(e: BeforeUnloadEvent) {
+  e.preventDefault();
+  e.returnValue = '';
+}
+
+/** "README.MD" / "notes.markdown" → the ".md" id the rest of the app expects. */
+const MARKDOWN_EXT = /\.(md|markdown)$/i;
+function noteIdFor(path: string): string {
+  return safeNoteId(path.replace(MARKDOWN_EXT, '.md'));
+}
+
+// Import all markdown files from a FSAA directory into PouchDB.
+// - One bad file must not end the import: it used to throw out of the loop on the
+//   first "_index.md" (PouchDB refuses ids starting with "_"), leaving a partial
+//   vault that looked complete.
+// - A note that already exists is never overwritten: same text → left alone,
+//   different text → the file is kept beside it as a conflict copy. That makes
+//   running the import again (after an interruption, or into a vault another tab
+//   created meanwhile) safe.
+export function importFromFSAA(
+  dirHandle: FileSystemDirectoryHandle,
+  onProgress?: (current: number, total: number) => void
+): Promise<ImportReport> {
+  const locks = lockManager();
+  const run = () => importFiles(dirHandle, onProgress);
+  return locks ? locks.request(IMPORT_LOCK, run) : run();
+}
+
+async function importFiles(
   dirHandle: FileSystemDirectoryHandle,
   onProgress?: (current: number, total: number) => void
 ): Promise<ImportReport> {
   const files = await collectFiles(dirHandle);
-  const report: ImportReport = { imported: 0, skipped: [], renamed: [] };
+  const report: ImportReport = { imported: 0, unchanged: 0, conflicts: [], skipped: [], renamed: [] };
   const taken = new Set(files.map((f) => f.path));
+  // Conflict copies an earlier run already left behind (so a re-run does not add them again).
+  const alreadyKept = new Set<string>();
+  for (const row of (await getDB().allDocs({ include_docs: true })).rows) {
+    const d = row.doc as NoteDoc | undefined;
+    if (d?.conflictOf) alreadyKept.add(`${d.conflictOf}\u0000${d.content}`);
+  }
   let done = 0;
 
-  for (const { path, handle } of files) {
-    try {
-      const id = safeNoteId(path);
-      if (id !== path) {
-        // The swapped name may already belong to another file of this folder.
-        if (taken.has(id)) throw new Error(`"${id}" already exists`);
-        taken.add(id);
+  const guarded = typeof window !== 'undefined';
+  if (guarded && importsRunning++ === 0) window.addEventListener('beforeunload', warnBeforeUnload);
+  markProgress({ done: 0, total: files.length });
+  try {
+    for (const { path, handle } of files) {
+      try {
+        const id = noteIdFor(path);
+        if (id !== path) {
+          // The swapped name may already belong to another file of this folder.
+          if (taken.has(id)) throw new Error(`"${id}" already exists`);
+          taken.add(id);
+        }
+        const file = await handle.getFile();
+        const content = await file.text();
+        const existing = await rawGet(id);
+        if (!existing || existing.trashed || existing.deleted) {
+          // (a trashed note of that name is parked by putNote, not lost)
+          await putNote(id, content);
+          report.imported++;
+          if (id !== path) report.renamed.push({ from: path, to: id });
+        } else if (existing.content === content || alreadyKept.has(`${id}\u0000${content}`)) {
+          report.unchanged++;
+        } else {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const rand = Math.random().toString(36).slice(2, 8);
+          const keptAs = `${id.replace(/\.md$/, '')} (conflict-${ts}-${rand}).md`;
+          const now = new Date().toISOString();
+          await getDB().put({
+            _id: keptAs, content, conflictOf: id,
+            title: path.split('/').pop()!.replace(MARKDOWN_EXT, ''), tags: [], links: [],
+            createdAt: now, updatedAt: now,
+          });
+          alreadyKept.add(`${id}\u0000${content}`);
+          report.conflicts.push({ path, keptAs });
+        }
+      } catch (e: any) {
+        report.skipped.push({ path, reason: e?.message ?? String(e) });
       }
-      const file = await handle.getFile();
-      const content = await file.text();
-      await putNote(id, content);
-      if (id !== path) report.renamed.push({ from: path, to: id });
-      report.imported++;
-    } catch (e: any) {
-      report.skipped.push({ path, reason: e?.message ?? String(e) });
+      done++;
+      if (done % 20 === 0) markProgress({ done, total: files.length });
+      onProgress?.(done, files.length);
     }
-    onProgress?.(++done, files.length);
+    // Ran to the end: nothing was interrupted (skipped files are in the report).
+    markProgress(null);
+  } finally {
+    if (guarded && --importsRunning === 0) window.removeEventListener('beforeunload', warnBeforeUnload);
   }
 
   return report;
+}
+
+async function rawGet(id: string): Promise<NoteDoc | null> {
+  try {
+    return await getDB().get(id);
+  } catch (e: any) {
+    if (e?.status === 404) return null;
+    throw e;
+  }
 }
 
 /** One line for the UI: "Imported 7 files. Renamed 2 (_a.md → -a.md, …). Skipped 1 (x.md)." */
 export function describeImport(r: ImportReport): string {
   const list = (items: string[]) => items.slice(0, 5).join(', ') + (items.length > 5 ? `, +${items.length - 5} more` : '');
   let msg = `Imported ${r.imported} file${r.imported === 1 ? '' : 's'}.`;
-  if (r.renamed.length) msg += ` Renamed ${r.renamed.length} (names can't start with "_"): ${list(r.renamed.map((x) => `${x.from} → ${x.to}`))}.`;
+  if (r.unchanged) msg += ` ${r.unchanged} already in the vault.`;
+  if (r.conflicts.length) msg += ` ${r.conflicts.length} differ from a note already here — kept as conflict copies: ${list(r.conflicts.map((x) => x.path))}.`;
+  if (r.renamed.length) msg += ` Renamed ${r.renamed.length} (ids end in ".md" and can't start with "_"): ${list(r.renamed.map((x) => `${x.from} → ${x.to}`))}.`;
   if (r.skipped.length) msg += ` Skipped ${r.skipped.length}: ${list(r.skipped.map((x) => `${x.path} (${x.reason})`))}.`;
   return msg;
+}
+
+/** Show the outcome — always: a partial import used to look complete. */
+export function announceImport(report: ImportReport): void {
+  const summary = describeImport(report);
+  if (report.skipped.length) toast.error(summary);
+  else if (report.renamed.length || report.conflicts.length) toast.warning(summary, { ttl: 20000 });
+  else toast.success(summary);
 }
 
 async function collectFiles(
@@ -107,7 +240,7 @@ async function collectFiles(
 
   for await (const entry of (dirHandle as any).values()) {
     const entryPath = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.kind === 'file' && entry.name.endsWith('.md') && !entry.name.startsWith('.')) {
+    if (entry.kind === 'file' && MARKDOWN_EXT.test(entry.name) && !entry.name.startsWith('.')) {
       result.push({ path: entryPath, handle: entry as FileSystemFileHandle });
     } else if (entry.kind === 'directory' && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
       const sub = await collectFiles(entry as FileSystemDirectoryHandle, entryPath);

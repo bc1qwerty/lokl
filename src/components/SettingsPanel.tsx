@@ -7,6 +7,9 @@ import { exportJSON, exportZIP, importJSON } from '../lib/backup';
 import { listTrash, purgeTrashed } from '../lib/db';
 import { toast } from '../lib/toast';
 import { settleOpenNote } from '../lib/autosave';
+import { isNativeSupported } from '../lib/fs';
+import { importFromFSAA, announceImport } from '../lib/migrate';
+import { useSignal } from '@preact/signals';
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -22,6 +25,24 @@ function download(blob: Blob, name: string) {
 export function SettingsPanel() {
   const str = t.value.settings;
   const s = settings.value;
+  const folderImport = useSignal('');   // progress text while a folder import runs
+
+  // Also the way to finish an import that was interrupted: notes already in the
+  // vault are skipped, differing ones are kept as conflict copies.
+  async function importFolder() {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      folderImport.value = 'Importing…';
+      const report = await importFromFSAA(handle, (current, total) => {
+        folderImport.value = `Importing ${current} / ${total}…`;
+      });
+      announceImport(report);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') toast.error(`Import failed: ${err?.message ?? 'unknown error'}`);
+    } finally {
+      folderImport.value = '';
+    }
+  }
 
   return (
     <div class="search-overlay" onClick={(e) => {
@@ -165,6 +186,12 @@ export function SettingsPanel() {
                 (e.target as HTMLInputElement).value = '';
               }} />
             </label>
+
+            {isNativeSupported() && (
+              <button class="btn-secondary settings-import-folder" disabled={!!folderImport.value} onClick={importFolder}>
+                {folderImport.value || 'Import from folder'}
+              </button>
+            )}
 
             <button class="btn-secondary" onClick={async () => {
               const trashed = await listTrash();

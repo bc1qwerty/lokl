@@ -295,9 +295,13 @@ test('an edit made elsewhere while typing here is kept as a conflict copy and sh
   }
   // the copy holds the other tab's text; the note itself holds one of the two, whole
   await page.locator('.conflict-open').first().click();
+  // Opening is asynchronous: read the editor only once the copy's tab is the active one
+  // (reading right after the click returned the note that was still on screen — a flaky pass/fail).
+  await expect(page.locator('.tab-item.active')).toHaveAttribute('title', /^contested \(conflict-/);
   const copy = await editorText(page);
   await page.locator('.conflict-open-orig').first().click();
-  await expect(page.locator('.tab-item.active')).toContainText('contested');
+  // exact title: "contested (conflict-…)" is the copy's tab and also contains "contested"
+  await expect(page.locator('.tab-item.active')).toHaveAttribute('title', 'contested.md');
   const original = await editorText(page);
   expect([copy, original].sort()).toEqual(['base mine', 'base theirs']);
   await second.close();

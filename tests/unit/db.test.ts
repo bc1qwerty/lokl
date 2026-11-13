@@ -187,6 +187,47 @@ describe('trash + sweeper', () => {
     expect((await getDB().get('b.md'))._rev).toBe(rev);
   });
 
+  // One read: the removal is pinned to the revision whose `trashed` flag was
+  // checked. Before, the flag was read, then the note was read again and removed —
+  // a restore landing in between wiped a live note.
+  it('purgeTrashed leaves a note that is restored between the check and the removal', async () => {
+    await putNote('t.md', 'precious');
+    await deleteNote('t.md');
+    const db = getDB();
+    const realGet = db.get.bind(db);
+    let raced = false;
+    (db as any).get = async (...args: any[]) => {
+      const doc = await (realGet as any)(...args);
+      if (!raced && args[0] === 't.md') { raced = true; await restoreNote('t.md'); } // another tab, right after our read
+      return doc;
+    };
+    try {
+      expect(await purgeTrashed('t.md')).toBe('not-trashed');
+    } finally {
+      (db as any).get = realGet;
+    }
+    expect((await getNote('t.md'))?.content).toBe('precious');
+  });
+
+  it('restoreTrashed does not undo a purge that landed between its check and its write', async () => {
+    await putNote('t.md', 'x');
+    await deleteNote('t.md');
+    const db = getDB();
+    const realGet = db.get.bind(db);
+    let raced = false;
+    (db as any).get = async (...args: any[]) => {
+      const doc = await (realGet as any)(...args);
+      if (!raced && args[0] === 't.md') { raced = true; await purgeNote('t.md'); }
+      return doc;
+    };
+    try {
+      expect(await restoreTrashed('t.md')).toBe('gone');
+    } finally {
+      (db as any).get = realGet;
+    }
+    await expect(getDB().get('t.md')).rejects.toMatchObject({ status: 404 });
+  });
+
   it('listTrash returns only trashed docs', async () => {
     await putNote('a.md', 'A');
     await putNote('b.md', 'B');

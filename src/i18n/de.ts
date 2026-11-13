@@ -27,7 +27,7 @@ const de: Locale = {
   dailyNote: { created: 'Tagesnotiz erstellt' },
   common: { cancel: 'Abbrechen', confirm: 'Bestätigen', close: 'Schließen', delete: 'Löschen', rename: 'Umbenennen', create: 'Erstellen' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
-  trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', empty: 'Trash is empty' },
+  trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.', empty: 'Trash is empty' },
 };
 
 export default de;

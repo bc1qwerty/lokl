@@ -136,7 +136,113 @@ test('folder import brings in "_"-named files under a visible replacement and sa
 test('a folder with nothing to import says so and stays on the welcome screen', async ({ page }) => {
   await withVault(page, { 'readme.txt': 'not markdown' });
   await page.getByRole('button', { name: 'Import from folder' }).click();
-  await expect(page.locator('.toast', { hasText: 'No .md files found' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('.toast', { hasText: 'No markdown files found' })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('button', { name: 'Start fresh' })).toBeVisible();
   await expect(page.locator('.sidebar')).toHaveCount(0);
 });
+
+async function openSettings(page: Page) {
+  await page.getByTitle('Settings').click();
+  await expect(page.locator('.settings-dialog')).toBeVisible({ timeout: 5_000 });
+}
+
+test('a link written against a "_" name still opens the note after import renamed it', async ({ page }) => {
+  await withVault(page, { '_index.md': 'INDEX BODY', 'a.md': 'see [[_index]] and [[_templates/daily]]', '_templates/daily.md': 'TPL' });
+  await page.getByRole('button', { name: 'Import from folder' }).click();
+  await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+  await page.locator('.tree-item-name', { hasText: /^a$/ }).click();
+  const links = page.locator('.markdown-preview a.wikilink');
+  await expect(links).toHaveCount(2, { timeout: 8_000 });
+  // neither is marked broken, and the first one opens the renamed note
+  await expect(page.locator('a.wikilink-broken')).toHaveCount(0);
+  await links.first().click();
+  await expect(page.locator('.tab-item.active')).toHaveAttribute('title', '-index.md', { timeout: 5_000 });
+  await expect(page.locator('.cm-content')).toContainText('INDEX BODY');
+});
+
+test('importing a folder into a vault never overwrites a note that is already there', async ({ page }) => {
+  await withVault(page, { 'n1.md': 'OLD TEXT FROM THE FOLDER', 'extra.md': 'EXTRA', 'same.md': '' });
+  await page.getByRole('button', { name: 'Start fresh' }).click();
+  await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+  await newFile(page, 'same');
+  await newFile(page, 'n1');
+  await page.locator('.cm-content').click();
+  await page.keyboard.insertText('written in the app');
+  await expect(page.locator('.toolbar')).toContainText('Saved', { timeout: 10_000 });
+
+  await openSettings(page);
+  await page.getByRole('button', { name: 'Import from folder' }).click();
+  const toast = page.locator('.toast', { hasText: 'Imported 1 file.' });
+  await expect(toast).toBeVisible({ timeout: 10_000 });
+  await expect(toast).toContainText('1 already in the vault');
+  await expect(toast).toContainText('kept as conflict copies: n1.md');
+  await page.keyboard.press('Escape');
+
+  // the note written here is intact; the folder's text sits beside it as a conflict copy
+  await expect(page.locator('.cm-content')).toContainText('written in the app');
+  await expect(page.locator('.conflict-count')).toHaveText('1', { timeout: 8_000 });
+  await expect(page.locator('.tree-item-name', { hasText: 'extra' })).toBeVisible({ timeout: 8_000 });
+  const ids = await noteIds(page);
+  expect(ids.filter((id) => !id.includes('(conflict-'))).toEqual(['extra.md', 'n1.md', 'same.md']);
+  expect(ids.filter((id) => id.startsWith('n1 (conflict-'))).toHaveLength(1);
+});
+
+test('an import cut short by a reload is reported on the next start and can be finished from Settings', async ({ page }) => {
+  test.setTimeout(180_000);
+  const TOTAL = 1500;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < TOTAL; i++) files[`n${String(i).padStart(4, '0')}.md`] = `body ${i}`;
+  await withVault(page, files);
+  await page.getByRole('button', { name: 'Import from folder' }).click();
+  // somewhere in the middle (100–999 of 1500)
+  await expect(page.locator('.welcome')).toContainText(/Importing \d{3} \/ 1500/, { timeout: 60_000 });
+
+  // leaving now asks first…
+  let asked = 0;
+  page.on('dialog', async (d) => { if (d.type() === 'beforeunload') asked++; await d.accept(); });
+  await page.reload();
+  expect(asked, 'no beforeunload prompt while the import was writing').toBe(1);
+
+  // …and the partial vault says what happened instead of opening as if complete
+  await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('.toast', { hasText: 'import was interrupted' })).toBeVisible({ timeout: 5_000 });
+  const before = (await noteIds(page)).length;
+  expect(before).toBeGreaterThan(50);
+  expect(before).toBeLessThan(TOTAL);
+
+  await openSettings(page);
+  await page.getByRole('button', { name: 'Import from folder' }).click();
+  await expect(page.locator('.toast', { hasText: 'already in the vault' })).toBeVisible({ timeout: 120_000 });
+  expect(await noteIds(page)).toHaveLength(TOTAL);
+
+  // finished: no notice on the next start
+  await page.reload();
+  await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(500);
+  await expect(page.locator('.toast', { hasText: 'import was interrupted' })).toHaveCount(0);
+});
+
+test('"Delete forever" on a trash row names the note and asks first', async ({ page }) => {
+  await freshStart(page);
+  await newFile(page, 'keepme');
+  await newFile(page, 'goner');
+  page.once('dialog', (d) => d.accept());   // "Delete goner?"
+  await page.locator('.tree-item-name', { hasText: 'goner' }).click({ button: 'right' });
+  await page.locator('.context-menu-item.danger').click();
+  const toggle = page.locator('.trash-toggle');
+  await expect(toggle).toContainText('(1)', { timeout: 5_000 });
+  await toggle.click();
+
+  // declined: nothing happens
+  let message = '';
+  page.once('dialog', (d) => { message = d.message(); return d.dismiss(); });
+  await page.locator('.trash-purge').click();
+  expect(message).toContain('goner.md');
+  await expect(toggle).toContainText('(1)');
+
+  page.once('dialog', (d) => d.accept());
+  await page.locator('.trash-purge').click();
+  await expect(toggle).toContainText('(0)', { timeout: 5_000 });
+  expect(await noteIds(page)).toEqual(['keepme.md']);
+});
+

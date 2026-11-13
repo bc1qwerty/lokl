@@ -8,10 +8,11 @@ import {
 } from './lib/store';
 import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, applyChange, expectLocalRemoval } from './lib/autosave';
 import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch } from './lib/db';
-import { updateLinksForFile } from './lib/markdown';
+import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
-import { indexChange, refreshLinks } from './lib/reindex';
+import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
 import { normalizeNotePath } from './lib/note-path';
+import { interruptedImport, clearInterruptedImport } from './lib/migrate';
 
 import { startQuotaMonitor } from './lib/quota';
 import { initSyncController } from './lib/sync-controller';
@@ -68,6 +69,16 @@ export function App() {
   // Initialize PouchDB on mount
   useEffect(() => {
     initDB();
+    // A folder import the previous page did not finish (tab closed, reload): the
+    // vault is partial and used to open as if it were whole.
+    void interruptedImport().then((cut) => {
+      if (!cut) return;
+      toast.warning(
+        `A folder import was interrupted after about ${cut.done} of ${cut.total} files. `
+        + 'Open Settings → "Import from folder" and pick the same folder to finish — notes already imported are skipped.',
+        { ttl: 120_000, action: { label: "Don't remind me", handler: clearInterruptedImport } },
+      );
+    });
     sweepTrash().catch(e => console.error('sweepTrash failed:', e));
     const stop = startQuotaMonitor();
     const stopSyncController = initSyncController();
@@ -96,10 +107,9 @@ export function App() {
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
       clearIndex();
-      for (const note of notes) {
-        indexFile(note._id, note.content);
-        updateLinksForFile(note._id, note.content);
-      }
+      for (const note of notes) indexFile(note._id, note.content);
+      // one pass — one updateLinksForFile() per note rebuilt every backlink each time (O(n²) at startup)
+      setAllLinks(notes);
       vault.value = { mode: 'pouchdb', name: 'lokl' };
     } catch (e: any) {
       console.error('Failed to load notes:', e);
@@ -114,15 +124,37 @@ export function App() {
 
   // PouchDB change feed (replaces 3s polling)
   useEffect(() => {
-    let linkTimer: ReturnType<typeof setTimeout> | undefined;
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    let burstStart = 0;
+    // Tree, links, backlinks and tags follow the feed once a burst settles
+    // (400 ms quiet, or every 2 s while changes keep coming — a long import).
+    // 🔴 This used to read every note (allDocs) on EVERY change, twice, and
+    //    re-resolve every link with it: typing froze for 0.3–1.2 s after each
+    //    autosave in a 1,500–3,000-note vault. Now the note list is read only
+    //    when a note appeared or vanished, and only changed notes are re-parsed.
+    // One round at a time, and the batch is taken BEFORE the note list is read:
+    // a list read earlier than a change in the batch would put a note that was
+    // just removed back into the tree and the index.
+    let rounds: Promise<void> = Promise.resolve();
+    const flush = () => {
+      settle = undefined;
+      burstStart = 0;
+      rounds = rounds.then(async () => {
+        const batch = takeChanges();
+        if (!treeIsStale(batch)) { refreshLinks(batch); return; }
+        const notes = await listNotes();
+        fileTree.value = buildFileTree(notes);
+        refreshLinks(batch, notes);
+      }).catch((e) => console.error('reindex failed:', e));
+    };
     const watcher = watchChanges((doc) => {
       // Search, backlinks and tags follow the feed too — notes that came in by sync
       // or import were in the tree but not findable until a reload.
       indexChange(doc);
-      clearTimeout(linkTimer);
-      linkTimer = setTimeout(() => {
-        listNotes().then((notes) => { fileTree.value = buildFileTree(notes); refreshLinks(notes); }).catch(() => {});
-      }, 400);
+      const now = Date.now();
+      if (!burstStart) burstStart = now;
+      clearTimeout(settle);
+      settle = setTimeout(flush, Math.max(0, Math.min(400, burstStart + 2000 - now)));
       if (applyChange(doc) === 'closed') {
         removeFromIndex(doc._id);
         // The open note was removed elsewhere (another tab, another device):
@@ -130,12 +162,8 @@ export function App() {
         const rest = openTabs.value;
         if (!currentFilePath.value && rest.length > 0) void handleFileClick(rest[rest.length - 1]);
       }
-      // Rebuild file tree on any change
-      listNotes().then(notes => {
-        fileTree.value = buildFileTree(notes);
-      });
     });
-    return () => { clearTimeout(linkTimer); watcher.cancel(); };
+    return () => { clearTimeout(settle); watcher.cancel(); };
     // re-attach when the database handle is replaced (reopenDB)
   }, [dbEpoch.value]);
 
@@ -193,14 +221,16 @@ export function App() {
     // "/lead", "trail/", "x/../y" used to become ids as typed; "_x" was refused by the database.
     const path = normalizeNotePath(name);
     if (!path) { toast.error(`"${name}" is not a usable note name.`); return; }
-    if (/^_/.test(name.replace(/^[\s/]+/, ''))) toast.info(`Names can't start with "_" — created as "${path}".`);
+    const swapped = /^_/.test(name.replace(/^[\s/]+/, ''));
     try {
       // An existing note with this name is opened, never blanked.
       if (await getNote(path)) {
         newFileOpen.value = false;
+        if (swapped) toast.info(`Names can't start with "_" — opened the existing "${path}".`);
         await handleFileClick(path);
         return;
       }
+      if (swapped) toast.info(`Names can't start with "_" — created as "${path}".`);
       await putNote(path, '');
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);

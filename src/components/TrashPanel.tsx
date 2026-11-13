@@ -76,7 +76,11 @@ export function TrashPanel() {
                 class="trash-purge"
                 title={`${str.deleteForever}: ${n._id}`}
                 aria-label={`${str.deleteForever}: ${n._id}`}
-                onClick={() => act(n._id, purgeTrashed)}
+                onClick={() => {
+                  // No undo, and the list re-sorts under the pointer every few seconds:
+                  // name the note and ask.
+                  if (confirm(str.deleteForeverConfirm.replace('{name}', n._id))) act(n._id, purgeTrashed);
+                }}
               >
                 {str.deleteForever}
               </button>

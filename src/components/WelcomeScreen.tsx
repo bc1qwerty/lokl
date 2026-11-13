@@ -1,7 +1,7 @@
 import { useSignal } from '@preact/signals';
 import { t } from '../i18n';
 import { isNativeSupported } from '../lib/fs';
-import { importFromFSAA, describeImport, markMigrated } from '../lib/migrate';
+import { importFromFSAA, describeImport, announceImport, markMigrated } from '../lib/migrate';
 import { toast } from '../lib/toast';
 
 interface Props {
@@ -22,15 +22,13 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
       progress.value = `Importing ${current} / ${total}...`;
     });
     const summary = describeImport(report);
-    if (report.imported === 0) {
+    if (report.imported + report.unchanged + report.conflicts.length === 0) {
       // Nothing came in — stay here instead of opening an empty vault as if it worked.
-      toast.error(report.skipped.length ? summary : 'No .md files found in that folder.');
+      toast.error(report.skipped.length ? summary : 'No markdown files found in that folder.');
       progress.value = '';
       return;
     }
-    if (report.skipped.length) toast.error(summary);
-    else if (report.renamed.length) toast.warning(summary, { ttl: 20000 });
-    else toast.success(summary);
+    announceImport(report);
     markMigrated();
     progress.value = `Imported ${report.imported} files. Loading...`;
     await onLoadComplete();

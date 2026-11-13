@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { updateLinksForFile } from '../../src/lib/markdown';
+import { updateLinksForFile, resetLinkIndex } from '../../src/lib/markdown';
 import { backlinksIndex, wikilinksIndex, fileTree } from '../../src/lib/store';
 import type { FileEntry } from '../../src/types';
 
@@ -10,8 +10,7 @@ function setKnownFiles(...paths: string[]) {
 
 beforeEach(() => {
   fileTree.value = [];
-  backlinksIndex.value = new Map();
-  wikilinksIndex.value = new Map();
+  resetLinkIndex();
 });
 
 describe('markdown link indexing', () => {

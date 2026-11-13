@@ -219,10 +219,23 @@ export async function restoreNote(id: string): Promise<void> {
 // branches (a sync conflict not yet resolved — e.g. the other device edited the
 // note this one trashed). Removing only the winner promotes a loser: "Delete
 // forever" brought the note back, on every device.
+//
+// The winner goes first, at the exact revision that was read: if the note has
+// moved since (restored, edited), that removal is refused (409) and NOTHING is
+// touched — the losing branches of a note that is live again are someone's
+// unresolved edits, not trash.
+type Leaves = NoteDoc & { _rev: string; _conflicts?: string[] };
+async function removeLeavesOf(doc: Leaves): Promise<void> {
+  await getDB().remove(doc._id, doc._rev);
+  for (const rev of doc._conflicts ?? []) {
+    try { await getDB().remove(doc._id, rev); } catch (e: any) {
+      if (e?.status !== 404 && e?.status !== 409) throw e;
+    }
+  }
+}
+
 async function removeAllLeaves(id: string): Promise<void> {
-  const doc = await getDB().get(id, { conflicts: true }) as NoteDoc & { _rev: string; _conflicts?: string[] };
-  for (const rev of doc._conflicts ?? []) await getDB().remove(id, rev);
-  await getDB().remove(id, doc._rev);
+  await removeLeavesOf(await getDB().get(id, { conflicts: true }) as Leaves);
 }
 
 export async function purgeNote(id: string): Promise<void> {
@@ -232,29 +245,42 @@ export async function purgeNote(id: string): Promise<void> {
 // The trash panel works from a list that can be seconds old. Another tab or
 // device may have restored (or already purged) the note since — "Delete forever"
 // on that stale row used to wipe a LIVE note, irreversibly, on every device.
-// These re-read the note at the moment of the click and act only on real trash.
+// These read the note at the moment of the click and act only on real trash —
+// in ONE read: the write is pinned to the revision whose `trashed` flag was
+// checked, so a restore landing in between makes it fail instead of slipping through.
 export type TrashAction = 'done' | 'not-trashed' | 'gone';
 
-async function trashedState(id: string): Promise<TrashAction> {
-  try {
-    const doc = await getDB().get(id);
-    return doc.trashed ? 'done' : 'not-trashed';
-  } catch (e: any) {
-    if (e?.status === 404) return 'gone';
-    throw e;
+async function onTrashed(id: string, act: (doc: Leaves) => Promise<void>): Promise<TrashAction> {
+  for (let attempt = 0; ; attempt++) {
+    let doc: Leaves;
+    try {
+      doc = await getDB().get(id, { conflicts: true }) as Leaves;
+    } catch (e: any) {
+      if (e?.status === 404) return 'gone';
+      throw e;
+    }
+    if (!doc.trashed) return 'not-trashed';
+    try {
+      await act(doc);
+      return 'done';
+    } catch (e: any) {
+      // moved under us — look again (it may be live now, or gone)
+      if (e?.status === 409 && attempt < 3) continue;
+      throw e;
+    }
   }
 }
 
-export async function purgeTrashed(id: string): Promise<TrashAction> {
-  const state = await trashedState(id);
-  if (state === 'done') await removeAllLeaves(id);
-  return state;
+export function purgeTrashed(id: string): Promise<TrashAction> {
+  return onTrashed(id, removeLeavesOf);
 }
 
-export async function restoreTrashed(id: string): Promise<TrashAction> {
-  const state = await trashedState(id);
-  if (state === 'done') await restoreNote(id);
-  return state;
+export function restoreTrashed(id: string): Promise<TrashAction> {
+  return onTrashed(id, async (doc) => {
+    const { trashed, trashedAt, _conflicts, ...rest } = doc as Leaves & { trashedAt?: string };
+    void trashed; void trashedAt; void _conflicts;
+    await getDB().put(rest);
+  });
 }
 
 export async function listTrash(): Promise<NoteDoc[]> {
@@ -280,7 +306,8 @@ export async function sweepTrash(now: number = Date.now()): Promise<void> {
     }
     // 2. Old trash → physical remove
     if (doc.trashed && doc.trashedAt && Date.parse(doc.trashedAt) < cutoff) {
-      await removeAllLeaves(doc._id);
+      // re-checked at removal: a note restored since this list was read stays
+      await purgeTrashed(doc._id);
     }
   }
 }
