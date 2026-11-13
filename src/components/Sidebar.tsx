@@ -1,7 +1,8 @@
 import type { ComponentChildren } from 'preact';
+import { useRef } from 'preact/hooks';
 import { t } from '../i18n';
-import { vault, fileTree, searchOpen, settings, sortTree } from '../lib/store';
-import { FileTree } from './FileTree';
+import { vault, fileTree, searchOpen, settings, sortTree, sidebarOpen } from '../lib/store';
+import { FileTree, useRovingTree } from './FileTree';
 import { ConflictPanel } from './ConflictPanel';
 import { TrashPanel } from './TrashPanel';
 
@@ -14,9 +15,13 @@ interface Props {
 export function Sidebar({ onFileClick, onNewFile, children }: Props) {
   const str = t.value.sidebar;
   const v = vault.value;
+  const treeRef = useRef<HTMLDivElement>(null);
+  useRovingTree(treeRef);
 
   return (
-    <aside class="sidebar">
+    // A closed sidebar is only 0px wide: its rows and buttons stayed in the tab order (and in the
+    // accessibility tree), so Tab walked through things nobody could see. `inert` takes them out.
+    <aside class="sidebar" inert={!sidebarOpen.value}>
       <div class="sidebar-header">
         <h2>{v?.name || 'Lokl'}</h2>
         <div class="sidebar-actions">
@@ -41,7 +46,7 @@ export function Sidebar({ onFileClick, onNewFile, children }: Props) {
         />
       </div>
 
-      <div class="file-tree" role="tree" aria-label={str.files}>
+      <div class="file-tree" role="tree" aria-label={str.files} ref={treeRef}>
         {fileTree.value.length > 0 ? (
           <FileTree entries={sortTree(fileTree.value, settings.value.sortBy)} onFileClick={onFileClick} />
         ) : (

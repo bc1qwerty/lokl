@@ -28,6 +28,8 @@ const zh: Locale = {
   common: { cancel: '取消', confirm: '确认', close: '关闭', delete: '删除', rename: '重命名', create: '创建' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
   trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.', empty: 'Trash is empty' },
+  nameDialog: { newFile: '新建文件', newFilePlaceholder: '文件名.md', renamePlaceholder: '新名称', selectFile: '选择一个文件开始编辑' },
+  a11y: { moreActions: '更多操作', notifications: '通知', dismiss: '关闭通知', editorFailed: '无法加载编辑器。请检查网络连接后重试，您的笔记是安全的。', retry: '重试', reload: '重新加载' },
 };
 
 export default zh;

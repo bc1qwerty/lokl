@@ -18,7 +18,9 @@ import { interruptedImport, clearInterruptedImport, rememberInterruptedToast } f
 import { startQuotaMonitor } from './lib/quota';
 import { initSyncController } from './lib/sync-controller';
 import { resolveAllConflicts } from './lib/sync';
-import { isNarrow, toggleSidebar } from './lib/store';
+import { isNarrow, toggleSidebar, withModified } from './lib/store';
+import { t } from './i18n';
+import { focusTreeRow } from './components/FileTree';
 import { LoginPanel } from './components/LoginPanel';
 import { QuotaBanner } from './components/QuotaBanner';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -45,10 +47,10 @@ const editorAttempt = signal(0);
 function EditorLoadFailed() {
   return (
     <div class="editor-load-failed" role="alert" style="flex:1; display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; color:var(--text-muted); font-size:14px; padding:16px; text-align:center">
-      <span>The editor could not be loaded. Check your connection and try again — your notes are safe.</span>
+      <span>{t.value.a11y.editorFailed}</span>
       <span style="display:flex; gap:8px">
-        <button class="btn-primary" onClick={retryEditor}>Retry</button>
-        <button class="btn-secondary" onClick={() => location.reload()}>Reload</button>
+        <button class="btn-primary" onClick={retryEditor}>{t.value.a11y.retry}</button>
+        <button class="btn-secondary" onClick={() => location.reload()}>{t.value.a11y.reload}</button>
       </span>
     </div>
   );
@@ -85,12 +87,22 @@ function NameDialog({ title, placeholder, confirm, value, select, onInput, onCon
           onKeyDown={(e) => { if (e.key === 'Enter') onConfirm(); if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
         />
         <div class="new-file-actions">
-          <button class="btn-secondary" onClick={onClose}>Cancel</button>
+          <button class="btn-secondary" onClick={onClose}>{t.value.common.cancel}</button>
           <button class="btn-primary" onClick={onConfirm}>{confirm}</button>
         </div>
       </div>
     </div>
   );
+}
+
+// After a rename or a delete done from the keyboard the row the focus came from is gone and the focus
+// fell to <body>: the next Tab started from the top of the page. Put it back on the tree — unless the
+// focus went somewhere on purpose (the editor of the renamed note, a dialog).
+function refocusTree(path?: string) {
+  requestAnimationFrame(() => {
+    const now = document.activeElement;
+    if (!now || now === document.body) focusTreeRow(path);
+  });
 }
 
 export function App() {
@@ -174,12 +186,23 @@ export function App() {
     // a list read earlier than a change in the batch would put a note that was
     // just removed back into the tree and the index.
     let rounds: Promise<void> = Promise.resolve();
+    // "Sort files by: Modified" reads FileEntry.modified, and the tree is only rebuilt when a note
+    // appears or vanishes: an ordinary save (this tab, another tab, sync) left the order as it was
+    // until the next reload. Saves patch the time of the rows they touched instead.
+    const touched = new Map<string, string>();
     const flush = () => {
       settle = undefined;
       burstStart = 0;
       rounds = rounds.then(async () => {
         const batch = takeChanges();
-        if (!treeIsStale(batch)) { refreshLinks(batch); return; }
+        const times = new Map(touched);
+        touched.clear();
+        if (!treeIsStale(batch)) {
+          refreshLinks(batch);
+          const next = withModified(fileTree.value, times);
+          if (next !== fileTree.value) fileTree.value = next;
+          return;
+        }
         const notes = await listNotes();
         fileTree.value = buildFileTree(notes);
         refreshLinks(batch, notes);
@@ -189,6 +212,7 @@ export function App() {
       // Search, backlinks and tags follow the feed too — notes that came in by sync
       // or import were in the tree but not findable until a reload.
       indexChange(doc);
+      if (typeof doc.updatedAt === 'string') touched.set(doc._id, doc.updatedAt);
       const now = Date.now();
       if (!burstStart) burstStart = now;
       clearTimeout(settle);
@@ -341,6 +365,7 @@ export function App() {
       }
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
+      refocusTree(newPath);
     } catch (e: any) {
       console.error('Rename failed:', e);
       toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
@@ -365,6 +390,7 @@ export function App() {
       removeFromIndex(path);
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
+      refocusTree();
     } catch (e: any) {
       console.error('Delete failed:', e);
       toast.error(`Delete failed: ${e?.message ?? 'unknown error'}`);
@@ -403,9 +429,17 @@ export function App() {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === 'k') { e.preventDefault(); searchOpen.value = !searchOpen.value; }
-      if (mod && e.key === 'p') { e.preventDefault(); quickOpenOpen.value = !quickOpenOpen.value; }
-      if (mod && e.key === 'n') { e.preventDefault(); handleNewFile(); }
+      // One dialog at a time. Search opened over Settings used to land UNDER it (same z-index, earlier
+      // in the DOM) with the focus in its hidden input: typing and Enter opened a note nobody saw.
+      const only = (open: () => void) => {
+        searchOpen.value = false; quickOpenOpen.value = false; settingsOpen.value = false;
+        graphOpen.value = false; newFileOpen.value = false; renameOpen.value = false;
+        contextMenu.value = null;
+        open();
+      };
+      if (mod && e.key === 'k') { e.preventDefault(); const was = searchOpen.value; only(() => { searchOpen.value = !was; }); }
+      if (mod && e.key === 'p') { e.preventDefault(); const was = quickOpenOpen.value; only(() => { quickOpenOpen.value = !was; }); }
+      if (mod && e.key === 'n') { e.preventDefault(); only(handleNewFile); }
       if (mod && e.key === 's') {
         e.preventDefault();
         void flushPendingSave();
@@ -431,6 +465,8 @@ export function App() {
         else if (renameOpen.value) renameOpen.value = false;
         else if (settingsOpen.value) settingsOpen.value = false;
         else if (graphOpen.value) graphOpen.value = false;
+        // a drawer over the note (narrow window) closes like a dialog does
+        else if (isNarrow() && (sidebarOpen.value || backlinksOpen.value)) { sidebarOpen.value = false; backlinksOpen.value = false; }
       }
     }
     window.addEventListener('keydown', handleKeyDown);
@@ -500,14 +536,19 @@ export function App() {
             {(mode === 'preview' || mode === 'split') && <Preview onNavigate={handleNavigate} />}
             {!currentFilePath.value && (
               <div style="flex:1; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-size:14px">
-                Select a file to start editing
+                {t.value.nameDialog.selectFile}
               </div>
             )}
           </div>
         </div>
       </main>
 
-      <div class="backlinks-panel-wrapper" style={backlinksOpen.value ? '' : 'width:0;overflow:hidden'}>
+      {/* narrow window only (CSS): a tap outside an open drawer closes it */}
+      {(sidebarOpen.value || backlinksOpen.value) && (
+        <div class="drawer-backdrop" onClick={() => { sidebarOpen.value = false; backlinksOpen.value = false; }} />
+      )}
+
+      <div class="backlinks-panel-wrapper" inert={!backlinksOpen.value} style={backlinksOpen.value ? '' : 'width:0;overflow:hidden'}>
         <BacklinksPanel onNavigate={handleNavigate} />
         <TagsPanel onFileClick={handleFileClick} />
       </div>
@@ -527,7 +568,7 @@ export function App() {
 
       {newFileOpen.value && (
         <NameDialog
-          title="New File" placeholder="filename.md" confirm="Create"
+          title={t.value.nameDialog.newFile} placeholder={t.value.nameDialog.newFilePlaceholder} confirm={t.value.common.create}
           value={newFileName.value}
           onInput={(v) => { newFileName.value = v; }}
           onConfirm={handleCreateFile}
@@ -537,7 +578,7 @@ export function App() {
 
       {renameOpen.value && (
         <NameDialog
-          title="Rename" placeholder="new name" confirm="Rename" select
+          title={t.value.common.rename} placeholder={t.value.nameDialog.renamePlaceholder} confirm={t.value.common.rename} select
           value={renameValue.value}
           onInput={(v) => { renameValue.value = v; }}
           onConfirm={handleDoRename}

@@ -16,6 +16,21 @@
 .tree-item.active { background: var(--accent-bg); color: var(--accent); }
 .tree-item-icon { width: 16px; text-align: center; font-size: 12px; flex-shrink: 0; }
 .tree-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* «⋯»: the touch path to rename·duplicate·delete (no right click on touch, and iOS Safari sends no
+   `contextmenu` on a long press). Hidden where a pointer can hover — the desktop layout is unchanged. */
+.tree-item-name { flex: 1 1 auto; min-width: 0; }
+.tree-item-more {
+  display: none;
+  flex: none;
+  align-items: center; justify-content: center;
+  min-width: 32px; height: 28px;
+  margin: -3px -8px -3px 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 16px;
+}
+.tree-item-more:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (hover: none), (max-width: 720px) { .tree-item-more { display: flex; } }
 
 /* Welcome screen */
 .welcome {
@@ -315,7 +330,10 @@
 }
 .tab-item:hover .tab-close, .tab-item:focus-within .tab-close, .tab-close:focus-visible { opacity: 1; }
 /* 가리킬 수 없는 화면(터치)에서는 닫기 단추가 영영 안 보였다 */
-@media (hover: none) { .tab-close { opacity: 1; } }
+@media (hover: none) {
+  /* and a 9×16px target could not be hit with a finger */
+  .tab-close { opacity: 1; min-width: 24px; min-height: 24px; }
+}
 .tab-close:hover { background: var(--bg-inset); color: var(--text-primary); }
 
 /* Context menu */

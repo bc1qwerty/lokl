@@ -130,6 +130,8 @@ const ko: Locale = {
     deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.',
     empty: 'Trash is empty',
   },
+  nameDialog: { newFile: '새 파일', newFilePlaceholder: '파일이름.md', renamePlaceholder: '새 이름', selectFile: '편집할 파일을 선택하세요' },
+  a11y: { moreActions: '추가 작업', notifications: '알림', dismiss: '알림 닫기', editorFailed: '편집기를 불러오지 못했습니다. 연결을 확인하고 다시 시도하세요. 노트는 안전합니다.', retry: '다시 시도', reload: '새로고침' },
 };
 
 export default ko;

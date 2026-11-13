@@ -130,6 +130,8 @@ const ja: Locale = {
     deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.',
     empty: 'Trash is empty',
   },
+  nameDialog: { newFile: '新規ファイル', newFilePlaceholder: 'ファイル名.md', renamePlaceholder: '新しい名前', selectFile: '編集するファイルを選択してください' },
+  a11y: { moreActions: 'その他の操作', notifications: '通知', dismiss: '通知を閉じる', editorFailed: 'エディターを読み込めませんでした。接続を確認して再試行してください。ノートは安全です。', retry: '再試行', reload: '再読み込み' },
 };
 
 export default ja;

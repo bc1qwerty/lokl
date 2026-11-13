@@ -28,6 +28,8 @@ const de: Locale = {
   common: { cancel: 'Abbrechen', confirm: 'Bestätigen', close: 'Schließen', delete: 'Löschen', rename: 'Umbenennen', create: 'Erstellen' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
   trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.', empty: 'Trash is empty' },
+  nameDialog: { newFile: 'Neue Datei', newFilePlaceholder: 'dateiname.md', renamePlaceholder: 'neuer Name', selectFile: 'Datei zum Bearbeiten auswählen' },
+  a11y: { moreActions: 'Weitere Aktionen', notifications: 'Benachrichtigungen', dismiss: 'Benachrichtigung schließen', editorFailed: 'Der Editor konnte nicht geladen werden. Verbindung prüfen und erneut versuchen – Ihre Notizen sind sicher.', retry: 'Erneut versuchen', reload: 'Neu laden' },
 };
 
 export default de;

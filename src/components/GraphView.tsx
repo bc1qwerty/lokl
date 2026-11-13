@@ -337,7 +337,7 @@ export function GraphView({ onNavigate }: { onNavigate: (path: string) => void }
       <div class="graph-container" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.title}>
         <div class="graph-header">
           <span>{str.title}</span>
-          <button class="toolbar-btn" aria-label="Close" title="Close" onClick={() => { graphOpen.value = false; }}>×</button>
+          <button class="toolbar-btn" aria-label={t.value.common.close} title={t.value.common.close} onClick={() => { graphOpen.value = false; }}>×</button>
         </div>
         <canvas ref={canvasRef} class="graph-canvas" />
       </div>

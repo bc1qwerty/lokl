@@ -95,6 +95,8 @@
 }
 .sidebar > * { flex-shrink: 0; }
 .app-layout[data-sidebar="closed"] .sidebar { width: 0; overflow: hidden; }
+/* closed panels are `inert` (app.tsx / Sidebar.tsx): 0px wide is not enough, their rows stayed tabbable */
+.drawer-backdrop { display: none; }
 
 .sidebar-header {
   display: flex;
@@ -217,6 +219,14 @@
     box-shadow: var(--shadow-lg);
   }
   .backlinks-panel-wrapper { justify-self: end; }
+  /* a tap outside an open drawer closes it (the element is only rendered while one is open) */
+  .drawer-backdrop {
+    display: block;
+    grid-column: 1;
+    grid-row: 2;
+    z-index: 19;
+    background: rgba(0, 0, 0, 0.35);
+  }
   .app-layout[data-sidebar="closed"] .sidebar,
   .app-layout[data-backlinks="closed"] .backlinks-panel-wrapper { box-shadow: none; border: none; }
 }

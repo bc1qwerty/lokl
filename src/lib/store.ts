@@ -19,20 +19,25 @@ export function isNarrow(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     && window.matchMedia('(max-width: 720px)').matches;
 }
+/** Tablet-sized window: there is room for one side panel next to the note, not two (two left ~250px of text at 768px). */
+export function isCompact(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 960px)').matches;
+}
 // On a narrow window both panels open would cover the note entirely, and a split view is two slivers.
 export const sidebarOpen = signal(!isNarrow());
 export const previewOpen = signal(true);
-export const backlinksOpen = signal(!isNarrow());
+export const backlinksOpen = signal(!isCompact());
 export const viewMode = signal<ViewMode>(isNarrow() ? 'edit' : 'split');
 // On a narrow window the two drawers share the same space: opening one closes the other, or the
 // one underneath is left open but covered.
 export function toggleSidebar(): void {
   sidebarOpen.value = !sidebarOpen.value;
-  if (sidebarOpen.value && isNarrow()) backlinksOpen.value = false;
+  if (sidebarOpen.value && isCompact()) backlinksOpen.value = false;
 }
 export function toggleBacklinks(): void {
   backlinksOpen.value = !backlinksOpen.value;
-  if (backlinksOpen.value && isNarrow()) sidebarOpen.value = false;
+  if (backlinksOpen.value && isCompact()) sidebarOpen.value = false;
 }
 
 // Crossing the breakpoint later (rotating a phone, resizing a window): drawers start closed again,
@@ -40,7 +45,11 @@ export function toggleBacklinks(): void {
 if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
   window.matchMedia('(max-width: 720px)').addEventListener?.('change', (e) => {
     sidebarOpen.value = !e.matches;
-    backlinksOpen.value = !e.matches;
+    backlinksOpen.value = !isCompact();
+  });
+  window.matchMedia('(max-width: 960px)').addEventListener?.('change', (e) => {
+    if (e.matches) { if (sidebarOpen.value) backlinksOpen.value = false; }
+    else backlinksOpen.value = true;
   });
 }
 export const searchOpen = signal(false);
@@ -96,6 +105,26 @@ export function sortTree(entries: FileEntry[], by: Settings['sortBy']): FileEntr
     return a.name.localeCompare(b.name);
   });
   return out;
+}
+
+/** The tree with the `modified` time of the given notes replaced; the same array when nothing changed. */
+export function withModified(entries: FileEntry[], times: Map<string, string>): FileEntry[] {
+  if (times.size === 0) return entries;
+  let changed = false;
+  const out = entries.map((e) => {
+    if (e.kind === 'file') {
+      const at = times.get(e.path);
+      if (at === undefined || at === e.modified) return e;
+      changed = true;
+      return { ...e, modified: at };
+    }
+    if (!e.children) return e;
+    const kids = withModified(e.children, times);
+    if (kids === e.children) return e;
+    changed = true;
+    return { ...e, children: kids };
+  });
+  return changed ? out : entries;
 }
 
 // Derived

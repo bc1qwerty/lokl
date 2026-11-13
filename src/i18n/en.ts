@@ -128,6 +128,8 @@ export const en = {
     deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.',
     empty: 'Trash is empty',
   },
+  nameDialog: { newFile: 'New File', newFilePlaceholder: 'filename.md', renamePlaceholder: 'new name', selectFile: 'Select a file to start editing' },
+  a11y: { moreActions: 'More actions', notifications: 'Notifications', dismiss: 'Dismiss notification', editorFailed: 'The editor could not be loaded. Check your connection and try again — your notes are safe.', retry: 'Retry', reload: 'Reload' },
 } as const;
 
 type DeepString<T> = { [K in keyof T]: T[K] extends string ? string : DeepString<T[K]> };

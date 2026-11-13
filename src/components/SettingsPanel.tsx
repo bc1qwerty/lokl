@@ -68,7 +68,7 @@ export function SettingsPanel() {
       <div class="settings-dialog" ref={dialogRef} role="dialog" aria-modal="true" aria-label={str.title}>
         <div class="settings-header">
           <h3>{str.title}</h3>
-          <button class="toolbar-btn" aria-label="Close" title="Close" onClick={() => { settingsOpen.value = false; }}>×</button>
+          <button class="toolbar-btn" aria-label={t.value.common.close} title={t.value.common.close} onClick={() => { settingsOpen.value = false; }}>×</button>
         </div>
 
         <div class="settings-body">

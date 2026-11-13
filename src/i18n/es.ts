@@ -28,6 +28,8 @@ const es: Locale = {
   common: { cancel: 'Cancelar', confirm: 'Confirmar', close: 'Cerrar', delete: 'Eliminar', rename: 'Renombrar', create: 'Crear' },
   conflicts: { title: 'Conflicts', openOriginal: 'open original', discard: 'discard' },
   trash: { title: 'Trash', restore: 'restore', deleteForever: 'delete forever', deleteForeverConfirm: 'Permanently delete "{name}"? This cannot be undone.', empty: 'Trash is empty' },
+  nameDialog: { newFile: 'Nuevo archivo', newFilePlaceholder: 'nombre.md', renamePlaceholder: 'nuevo nombre', selectFile: 'Selecciona un archivo para empezar a editar' },
+  a11y: { moreActions: 'Más acciones', notifications: 'Notificaciones', dismiss: 'Cerrar notificación', editorFailed: 'No se pudo cargar el editor. Comprueba la conexión e inténtalo de nuevo; tus notas están a salvo.', retry: 'Reintentar', reload: 'Recargar' },
 };
 
 export default es;
