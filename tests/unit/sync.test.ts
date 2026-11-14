@@ -23,6 +23,30 @@ afterEach(() => {
   __setSyncTiming(null);
 });
 
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+async function until(cond: () => boolean | Promise<boolean>, ms = 4000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await cond()) return;
+    await wait(15);
+  }
+  throw new Error(`condition not met; state=${JSON.stringify(syncState.value)}`);
+}
+function countingRemote(name: string, reject?: (docs: unknown[]) => unknown) {
+  const remoteDB = freshDB(name) as unknown as PouchDB.Database<NoteDoc>;
+  const real = remoteDB.bulkDocs.bind(remoteDB);
+  const calls: number[] = [];
+  (remoteDB as any).bulkDocs = (req: any, ...rest: unknown[]) => {
+    const docs = Array.isArray(req) ? req : req.docs;
+    // the conflict resolver and the replication checkpoint do not go through here with notes
+    calls.push(docs.length);
+    const err = reject?.(docs);
+    return err ? Promise.reject(err) : (real as any)(req, ...rest);
+  };
+  __setRemoteFactory(() => remoteDB);
+  return { remoteDB, calls };
+}
+
 describe('sync state machine', () => {
   it('starts in offline state', () => {
     expect(syncState.value.status).toBe('offline');
@@ -181,29 +205,6 @@ describe('a failing replication reaches the sync state through the real events',
 // 2026-11-14: live push sent every save on its own, retried a refused write about once a second
 // for good (PouchDB resets its backoff on every 'active'), and stacked one sticky toast per retry.
 describe('push pacing, backoff and refused writes', () => {
-  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
-  async function until(cond: () => boolean | Promise<boolean>, ms = 4000) {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      if (await cond()) return;
-      await wait(15);
-    }
-    throw new Error(`condition not met; state=${JSON.stringify(syncState.value)}`);
-  }
-  function countingRemote(name: string, reject?: (docs: unknown[]) => unknown) {
-    const remoteDB = freshDB(name) as unknown as PouchDB.Database<NoteDoc>;
-    const real = remoteDB.bulkDocs.bind(remoteDB);
-    const calls: number[] = [];
-    (remoteDB as any).bulkDocs = (req: any, ...rest: unknown[]) => {
-      const docs = Array.isArray(req) ? req : req.docs;
-      // the conflict resolver and the replication checkpoint do not go through here with notes
-      calls.push(docs.length);
-      const err = reject?.(docs);
-      return err ? Promise.reject(err) : (real as any)(req, ...rest);
-    };
-    __setRemoteFactory(() => remoteDB);
-    return { remoteDB, calls };
-  }
 
   it('a burst of saves leaves in one push, not one per save', async () => {
     const { remoteDB, calls } = countingRemote('remote-burst');
@@ -379,6 +380,84 @@ describe('push pacing, backoff and refused writes', () => {
 describe('request deadlines', () => {
   const hang = (_u: unknown, o?: RequestInit) => new Promise<Response>((_, rej) => {
     o?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+  });
+
+  // 2026-11-14: the upload deadline was 60s + one second per 20,000 *characters*. A 6MB batch of
+  // Korean notes on a 30KB/s uplink was cut at 160s every time and re-sent whole, forever.
+  it('the upload deadline counts bytes, not characters', async () => {
+    __setNetTiming({ first: 20, idle: 5000, slack: 10, longpoll: 30, uploadBytesPerSec: 10_000 });
+    const after = (ms: number) => (_u: unknown, o?: RequestInit) => new Promise<Response>((res, rej) => {
+      const timer = setTimeout(() => res(new Response('{}')), ms);
+      o?.signal?.addEventListener('abort', () => { clearTimeout(timer); rej(new DOMException('aborted', 'AbortError')); });
+    });
+    // 1,000 Korean characters = 3,000 bytes → 20ms + 300ms. Counted as characters it was 120ms.
+    const body = '가'.repeat(1000);
+    await expect(fetchWithDeadline(after(200), 'https://x.test/db/_bulk_docs', { method: 'POST', body })).resolves.toBeTruthy();
+  });
+
+  it('an upload that does not fit its deadline is sent in smaller batches, not re-sent whole', async () => {
+    __setNetTiming({ first: 15, idle: 5000, slack: 10, longpoll: 30, uploadBytesPerSec: 1e9 });
+    const remoteDB = freshDB('remote-slowlink') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    const sizes: number[] = [];
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.some((d: any) => typeof d.content === 'string')) sizes.push(docs.length);
+      if (docs.length > 3) {
+        // what the real remote does on a link too slow for this much: the request's deadline runs out
+        await fetchWithDeadline(hang, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x' }).catch(() => undefined);
+        throw { status: 0, name: 'unknown', message: 'aborted' };
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    for (let i = 0; i < 12; i++) await putNote(`n${i}.md`, `note ${i}`);
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 12, 8000);
+    await until(() => syncState.value.status === 'synced');
+    // batch size 100 → 50 → 25 → 13 → 7: the whole dozen goes at most five times, then less, and it ends
+    expect(sizes.filter(n => n === 12).length).toBeLessThanOrEqual(5);
+    expect(sizes[sizes.length - 1]).toBeLessThanOrEqual(3);
+  });
+
+  it('a single note too slow for its deadline is given longer, until it gets through', async () => {
+    // deadline = 15ms + bytes × scale / 20,000 per second → 65, 115, 215ms… for a 1,000-byte body
+    __setNetTiming({ first: 15, idle: 5000, slack: 10, longpoll: 30, uploadBytesPerSec: 20_000 });
+    const remoteDB = freshDB('remote-slownote') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    let tries = 0;
+    const slow = (_u: unknown, o?: RequestInit) => new Promise<Response>((res, rej) => {
+      const timer = setTimeout(() => res(new Response('{}')), 150);
+      o?.signal?.addEventListener('abort', () => { clearTimeout(timer); rej(new DOMException('aborted', 'AbortError')); });
+    });
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.some((d: any) => typeof d.content === 'string')) {
+        tries++;
+        try { await fetchWithDeadline(slow, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x'.repeat(1000) }); }
+        catch { throw { status: 0, name: 'unknown', message: 'aborted' }; }
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    await putNote('slow.md', 'takes a while');
+    startSync();
+    await until(async () => (await remoteDB.get('slow.md').catch(() => null)) !== null, 8000);
+    expect(tries).toBeGreaterThan(1);
+    expect(tries).toBeLessThan(6);
+    await until(() => syncState.value.status === 'synced');
+  });
+
+  it('a skipped note is named once, however often the sync restarts', async () => {
+    __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20, skipBytes: 500 });
+    const tooBig = (docs: any[]) => docs.some(d => (d.content?.length ?? 0) > 500);
+    countingRemote('remote-skip-once', (docs) =>
+      (tooBig(docs as any[]) ? { status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' } : null));
+    await putNote('giant-once.md', 'x'.repeat(2000));
+    startSync();
+    await until(() => toasts.value.some(t => /giant-once\.md/.test(t.message)));
+    for (let i = 0; i < 3; i++) { startSync(); await wait(150); }
+    expect(toasts.value.filter(t => /giant-once\.md/.test(t.message))).toHaveLength(1);
   });
 
   it('a request that never answers is aborted', async () => {

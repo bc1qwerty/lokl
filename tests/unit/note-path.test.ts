@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeNotePath, safeNoteId } from '../../src/lib/note-path';
+import { normalizeNotePath, safeNoteId, withExistingFolders } from '../../src/lib/note-path';
 
 describe('normalizeNotePath', () => {
   it('appends .md and keeps ordinary names', () => {
@@ -43,5 +43,22 @@ describe('safeNoteId', () => {
     expect(safeNoteId('_templates/daily.md')).toBe('-templates/daily.md');
     expect(safeNoteId('a_b.md')).toBe('a_b.md');
     expect(safeNoteId('plain.md')).toBe('plain.md');
+  });
+});
+
+describe('withExistingFolders', () => {
+  const nfdDir = '폴더'.normalize('NFD');
+  it('keeps the spelling a folder already has', () => {
+    expect(withExistingFolders('폴더/새노트.md', [`${nfdDir}/안쪽.md`])).toBe(`${nfdDir}/새노트.md`);
+    expect(withExistingFolders('폴더/하위/새노트.md', [`${nfdDir}/안쪽.md`])).toBe(`${nfdDir}/하위/새노트.md`);
+  });
+  it('takes the longest matching folder', () => {
+    const sub = '하위'.normalize('NFD');
+    expect(withExistingFolders('폴더/하위/x.md', [`${nfdDir}/a.md`, `${nfdDir}/${sub}/b.md`])).toBe(`${nfdDir}/${sub}/x.md`);
+  });
+  it('leaves ids alone when there is no such folder, or no folder at all', () => {
+    expect(withExistingFolders('다른/x.md', [`${nfdDir}/a.md`])).toBe('다른/x.md');
+    expect(withExistingFolders('x.md', [`${nfdDir}/a.md`])).toBe('x.md');
+    expect(withExistingFolders('폴더2/x.md', [`${nfdDir}/a.md`])).toBe('폴더2/x.md');
   });
 });

@@ -242,6 +242,33 @@ describe('the device is out of space', () => {
   });
 });
 
+describe('the device runs out of space and another write notices first', () => {
+  // A sync pull or an import hits the quota first and the connection dies; this save then fails with
+  // "connection is closing" and only a retry shows the quota error. The streak had already toasted
+  // "Save failed", so the real reason was never said.
+  it('names the full disk once when it shows up later in the same streak', async () => {
+    stop();
+    stop = startAutosave(DELAY, 40);
+    await putNote('q.md', '');
+    await open('q.md');
+    const db = getDB() as any;
+    const realPut = db.put.bind(db);
+    let n = 0;
+    db.put = () => (n++ === 0
+      ? Promise.reject({ name: 'unknown_error', status: 500, message: 'some other failure' })
+      : Promise.reject({ name: 'unknown_error', status: 500, reason: 'QuotaExceededError', message: 'unknown' }));
+    try {
+      currentFileContent.value = 'typed';
+      await until(() => toasts.value.some(t => /out of storage space/.test(t.message)), 4000);
+      await until(() => n >= 4, 4000);
+      expect(toasts.value.filter(t => /out of storage space/.test(t.message))).toHaveLength(1);
+      expect(toasts.value).toHaveLength(2); // the first failure's own toast, then the reason — nothing per retry
+    } finally {
+      db.put = realPut;
+    }
+  });
+});
+
 describe('applyChange (the change feed meeting the editor)', () => {
   // A rename/delete in another tab or device arrives as a tombstone with no
   // content. It was adopted like an edit: the editor went blank, turned dirty,

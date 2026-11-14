@@ -18,7 +18,7 @@ export default defineConfig({
       // 'prompt' so main.tsx's onNeedRefresh confirm actually runs — autoUpdate
       // reloaded unconditionally on SW activation, discarding unsaved edits.
       registerType: 'prompt',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Lokl — Local Knowledge Base',
         short_name: 'Lokl',
@@ -68,6 +68,12 @@ export default defineConfig({
           if (id.includes('vite/preload-helper')) return 'preload-helper';
           if (!id.includes('/node_modules/')) return undefined;
           if (id.includes('/@codemirror/language-data/')) return 'codemirror-langs';
+          // 언어 팩(language-data 가 필요할 때 동적으로 부르는 것)까지 한 묶음에 넣으면 편집기를 여는 데 1.5MB 를
+          // 받는다. 마크다운이 정적으로 쓰는 것(markdown·html·css·javascript)만 편집기 묶음에 두고 나머지는
+          // Rollup 이 언어별 동적 묶음으로 가르게 둔다.
+          if (id.includes('/@codemirror/legacy-modes/')) return undefined;
+          if (/\/@codemirror\/lang-(?!markdown|html|css|javascript)/.test(id)) return undefined;
+          if (/\/@lezer\/(?!common|lr|highlight|markdown|html|css|javascript)/.test(id)) return undefined;
           if (id.includes('/@codemirror/') || id.includes('/@lezer/') || id.includes('/crelt/') || id.includes('/style-mod/') || id.includes('/w3c-keyname/')) return 'codemirror';
           if (id.includes('/marked/')) return 'marked';
           if (id.includes('/minisearch/')) return 'minisearch';

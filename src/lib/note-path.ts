@@ -39,6 +39,29 @@ export function normalizeNotePath(input: string): string | null {
   return safeNoteId(parts.join('/'));
 }
 
+/**
+ * Spell the folders of a new id the way the vault already spells them. A folder that came from a
+ * Mac is stored NFD; a note typed into it (rename, "new file here") is NFC, and with the folder
+ * part NFC too the same folder showed up twice in the tree.
+ */
+export function withExistingFolders(id: string, existing: Iterable<string>): string {
+  const cut = id.lastIndexOf('/');
+  if (cut < 0) return id;
+  const wanted = nfc(id.slice(0, cut));
+  let best = '';
+  for (const p of existing) {
+    // every folder prefix of every existing id; the longest one that matches wins
+    for (let at = p.indexOf('/'); at >= 0; at = p.indexOf('/', at + 1)) {
+      const dir = p.slice(0, at);
+      const n = nfc(dir);
+      if (n.length <= nfc(best).length) continue;
+      if (wanted === n || wanted.startsWith(n + '/')) best = dir;
+    }
+  }
+  if (!best) return id;
+  return best + nfc(id).slice(nfc(best).length);
+}
+
 // cyrb53 — a short, stable, non-cryptographic hash; only has to tell texts apart within one note's copies.
 export function contentHash(text: string): string {
   let h1 = 0xdeadbeef, h2 = 0x41c6ce57;

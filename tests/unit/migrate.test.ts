@@ -262,3 +262,40 @@ describe('migrate.importFromFSAA that does not finish', () => {
   });
 });
 
+
+// (Latin names here: the memory adapter's allDocs does not return ids made of Hangul jamo. The
+// Korean case runs in the browser, tests/e2e.)
+describe('importing over notes stored with decomposed (NFD) ids', () => {
+  // 2026-11-14: notes imported from a Mac folder before ids were normalised keep NFD ids. The import
+  // looked them up by the NFC id, found nothing, and wrote every note a second time.
+  it('running the same folder again adds nothing', async () => {
+    const nfd = (x: string) => x.normalize('NFD');
+    await getDB().put({ _id: nfd('café.md'), content: 'minutes', title: 'café', tags: [], links: [], createdAt: 'x', updatedAt: 'x' } as any);
+    await getDB().put({ _id: `${nfd('résumés')}/${nfd('éte.md')}`, content: 'monday', title: 'éte', tags: [], links: [], createdAt: 'x', updatedAt: 'x' } as any);
+    const dir = folder({ [nfd('café.md')]: 'minutes' });
+    const sub = createMockDir(nfd('résumés'));
+    sub.children.set(nfd('éte.md'), { kind: 'file', name: nfd('éte.md'), content: 'monday' } as any);
+    dir.children.set(nfd('résumés'), sub);
+    const report = await importFromFSAA(wrapAsFSAA(dir));
+    expect(report.imported).toBe(0);
+    expect(report.unchanged).toBe(2);
+    expect((await listNotes()).length).toBe(2);
+  });
+
+  it('a file whose text differs is kept beside the existing NFD note, not as a twin', async () => {
+    const id = 'naïve notes.md'.normalize('NFD');
+    await getDB().put({ _id: id, content: 'old', title: 'naïve notes', tags: [], links: [], createdAt: 'x', updatedAt: 'x' } as any);
+    const report = await importFromFSAA(wrapAsFSAA(folder({ [id]: 'new text' })));
+    expect(report.imported).toBe(0);
+    expect(report.conflicts).toHaveLength(1);
+    expect((await getNote(id))?.content).toBe('old');
+    expect(await getNote('naïve notes.md'.normalize('NFC'))).toBeNull();
+  });
+
+  it('a name already taken inside the folder is reported in the user\'s language', async () => {
+    localStorage.setItem('lokl-lang', 'en');
+    const report = await importFromFSAA(wrapAsFSAA(folder({ '_x.md': 'a', '-x.md': 'b' })));
+    expect(report.skipped).toHaveLength(1);
+    expect(report.skipped[0].reason).toBe('"-x.md" already exists');
+  });
+});

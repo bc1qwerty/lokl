@@ -40,7 +40,7 @@ export function SubscriptionPanel() {
         sub.value = await res.json();
         // Paid while this panel was closed (the poll below dies with it), or renewed on another
         // device: nobody else tells the controller. A running sync is not restarted by this.
-        if (sub.value?.active && syncState.value.status === 'offline') notifySubscriptionChanged();
+        if (sub.value?.active && syncState.value.status === 'offline') notifySubscriptionChanged(true);
       }
     } catch { /* ignore */ }
   }

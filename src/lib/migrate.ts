@@ -3,6 +3,7 @@ import type { NoteDoc } from './db';
 import { safeNoteId, contentHash, nfc } from './note-path';
 import { toast, dismiss } from './toast';
 import { t, tf } from '../i18n';
+import { appError, errorText } from './error-text';
 
 export function isNativeSupported(): boolean {
   return 'showDirectoryPicker' in window;
@@ -113,9 +114,16 @@ async function importFiles(
   const taken = new Set(files.map((f) => f.path));
   // Conflict copies an earlier run already left behind (so a re-run does not add them again).
   const alreadyKept = new Set<string>();
+  // Notes an earlier version imported from a Mac folder keep their decomposed (NFD) ids. Looked up
+  // by the composed id alone they read as "not there", and running the import again — the way to
+  // finish an interrupted one — made a second copy of every note.
+  const byNfc = new Map<string, string>();
   for (const row of (await getDB().allDocs({ include_docs: true })).rows) {
     const d = row.doc as NoteDoc | undefined;
     if (d?.conflictOf) alreadyKept.add(`${d.conflictOf}\u0000${d.content}`);
+    const n = nfc(row.id);
+    // both spellings present: the composed one is the id a new import would write
+    if (row.id === n || !byNfc.has(n)) byNfc.set(n, row.id);
   }
   let done = 0;
 
@@ -125,10 +133,11 @@ async function importFiles(
   try {
     for (const { path, handle } of files) {
       try {
-        const id = noteIdFor(path);
+        const composed = noteIdFor(path);
+        const id = byNfc.get(composed) ?? composed;
         if (id !== path) {
           // The swapped name may already belong to another file of this folder.
-          if (taken.has(id)) throw new Error(`"${id}" already exists`);
+          if (taken.has(id)) throw appError('NAME_TAKEN', `"${id}" already exists`, id);
           taken.add(id);
         }
         const file = await handle.getFile();
@@ -138,7 +147,7 @@ async function importFiles(
           // (a trashed note of that name is parked by putNote, not lost)
           await putNote(id, content);
           report.imported++;
-          if (id !== nfc(path)) report.renamed.push({ from: path, to: id });
+          if (nfc(id) !== nfc(path)) report.renamed.push({ from: path, to: id });
         } else if (existing.content === content || alreadyKept.has(`${id}\u0000${content}`)) {
           report.unchanged++;
         } else {
@@ -161,7 +170,7 @@ async function importFiles(
           alreadyKept.add(`${id}\u0000${content}`);
         }
       } catch (e: any) {
-        report.skipped.push({ path, reason: e?.message ?? String(e) });
+        report.skipped.push({ path, reason: errorText(e) });
       }
       done++;
       if (done % 20 === 0) markProgress({ done, total: files.length });

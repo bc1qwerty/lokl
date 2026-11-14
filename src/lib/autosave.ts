@@ -28,6 +28,7 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryBase = SAVE_RETRY_MS;
 let retryDelay = SAVE_RETRY_MS;
 let failStreak = 0;
+let fullWarned = false;
 let maxWait = AUTOSAVE_MAX_WAIT_MS;
 // When the text that is waiting to be saved first became dirty.
 let dirtySince: number | null = null;
@@ -144,6 +145,7 @@ async function doSave(path: string, content: string): Promise<boolean> {
     updateLinksForFile(path, content);
     indexFile(path, content);
     failStreak = 0;
+    fullWarned = false;
     retryDelay = retryBase;
     askPersistence();
     if (currentFilePath.peek() === path) {
@@ -165,14 +167,16 @@ async function doSave(path: string, content: string): Promise<boolean> {
     return true;
   } catch (e: any) {
     console.error('Save failed:', e);
-    // One toast per failure streak — the retry below would otherwise repeat it.
-    if (failStreak++ === 0) {
-      if (isStorageFull(e) || (isConnectionLost(e) && await deviceStorageFull())) {
-        // Emptying the trash does not help here: once the browser is out of space even deletes fail.
-        toast.error(t.value.msg.storageFull);
-      } else {
-        toast.error(tf(t.value.msg.saveFailed, { error: e?.message ?? t.value.msg.unknownError }));
-      }
+    // One toast per failure streak — the retry below would otherwise repeat it. The reason is said
+    // once more if it only shows later: when another write (a sync pull, an import) hit the full disk
+    // first, this save fails with "connection is closing" and the quota error comes on a retry.
+    const first = failStreak++ === 0;
+    const full = (first || !fullWarned) && (isStorageFull(e) || (isConnectionLost(e) && await deviceStorageFull()));
+    if (full) {
+      // Emptying the trash does not help here: once the browser is out of space even deletes fail.
+      if (!fullWarned) { fullWarned = true; toast.error(t.value.msg.storageFull); }
+    } else if (first) {
+      toast.error(tf(t.value.msg.saveFailed, { error: e?.message ?? t.value.msg.unknownError }));
     }
     // A dead connection never recovers on its own — every retry would fail the
     // same way until a reload. Open a new one; the retry below uses it.
@@ -283,6 +287,7 @@ export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number
     clearTimers();
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     failStreak = 0;
+    fullWarned = false;
     retryBase = retryDelay = SAVE_RETRY_MS;
     saveTimeout = SAVE_TIMEOUT_MS;
   };

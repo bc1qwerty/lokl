@@ -1,6 +1,7 @@
 import PouchDB from 'pouchdb-browser';
 import { signal } from '@preact/signals';
 import type { FileEntry } from '../types';
+import { appError } from './error-text';
 
 export interface NoteDoc {
   _id: string;        // normalized path e.g. "journal/2026-04-07.md"
@@ -365,10 +366,12 @@ export function buildFileTree(notes: NoteDoc[]): FileEntry[] {
 
     for (let i = 0; i < parts.length - 1; i++) {
       const dirPath = parts.slice(0, i + 1).join('/');
-      let dir = dirs.get(dirPath);
+      // One row per folder, however its name is spelled (a Mac folder is NFD, typed names NFC).
+      const key = dirPath.normalize('NFC');
+      let dir = dirs.get(key);
       if (!dir) {
         dir = { name: parts[i], path: dirPath, kind: 'directory', children: [] };
-        dirs.set(dirPath, dir);
+        dirs.set(key, dir);
         current.push(dir);
       }
       current = dir.children!;
@@ -472,12 +475,12 @@ export async function atomicRename(oldPath: string, newPath: string): Promise<vo
   if (oldPath === newPath) return;
   // Reserve check: destination must not exist as a visible note.
   const destExisting = await getNote(newPath);
-  if (destExisting) throw new Error('Destination exists');
+  if (destExisting) throw appError('DEST_EXISTS', 'Destination exists');
   // Losing revisions that sync has not turned into conflict copies yet would be removed with the
   // old id below (purgeNote takes every leaf). Make them copies first; they are re-pointed at the end.
   try { await resolveConflict(oldPath); } catch (e: any) { if (e?.status !== 404) console.error('Resolving conflicts before rename failed:', e); }
   const source = await getNote(oldPath);
-  if (!source) throw new Error('Source not found');
+  if (!source) throw appError('SOURCE_MISSING', 'Source not found');
 
   // Phase 1: copy to new path.
   await putNote(newPath, source.content, { createdAt: source.createdAt });

@@ -42,6 +42,8 @@ const SUB_CHECK_TIMEOUT_MS = 15_000;
 let subCheckTimeout = SUB_CHECK_TIMEOUT_MS;
 let lastSubStatus = 0;
 let lastVisibleCheck = 0;
+const VISIBLE_RECHECK_MS = 10_000;
+let visibleTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Test hook: shorten the subscription-check deadline. */
 export function __setSubCheckTimeout(ms: number | null): void {
@@ -80,7 +82,7 @@ function clearRecheck(): void {
   recheckTimer = null;
 }
 
-async function evaluate(): Promise<void> {
+async function evaluate(known?: boolean): Promise<void> {
   const seq = ++checkSeq;
   clearRecheck();
   if (authState.value.status !== 'authenticated') {
@@ -88,7 +90,9 @@ async function evaluate(): Promise<void> {
     stopSync();
     return;
   }
-  const active = await hasActiveSubscription();
+  // The settings panel has just read the subscription itself — do not ask the server a second time.
+  const active = known !== undefined ? known : await hasActiveSubscription();
+  if (known !== undefined) lastSubStatus = 200;
   // 확인 중에 로그아웃/재로그인이 겹치면 낡은 응답으로 켜고 끄지 않는다.
   if (seq !== checkSeq) return;
   if (active === null) {
@@ -112,8 +116,8 @@ async function evaluate(): Promise<void> {
 }
 
 /** 구독 결제가 방금 확정됐을 때(SubscriptionPanel) 재평가를 요청한다. */
-export function notifySubscriptionChanged(): void {
-  void evaluate();
+export function notifySubscriptionChanged(active?: boolean): void {
+  void evaluate(active);
 }
 
 /** app 기동 시 1회 연결. 반환값은 dispose (effect 해제 + 동기화 중지). */
@@ -138,13 +142,19 @@ export function initSyncController(): () => void {
   // 다른 기기에서 결제·갱신한 뒤 이 탭으로 돌아왔을 때. 돌고 있으면 묻지 않는다(만료는 서버의 403 이 알린다).
   const onVisible = () => {
     if (document.visibilityState !== 'visible' || authState.value.status !== 'authenticated' || isSyncing() || recheckTimer) return;
-    if (Date.now() - lastVisibleCheck < 60_000) return;
+    // Only reached while sync is off, so this is one small GET at most every 10s of tab switching.
+    // Asked too soon after the last one (paid on the phone and came straight back): ask when the
+    // window is over instead of not at all.
+    const wait = lastVisibleCheck + VISIBLE_RECHECK_MS - Date.now();
+    if (visibleTimer) { clearTimeout(visibleTimer); visibleTimer = null; }
+    if (wait > 0) { visibleTimer = setTimeout(() => { visibleTimer = null; onVisible(); }, wait); return; }
     lastVisibleCheck = Date.now();
     void evaluate();
   };
   document.addEventListener('visibilitychange', onVisible);
   return () => {
     document.removeEventListener('visibilitychange', onVisible);
+    if (visibleTimer) { clearTimeout(visibleTimer); visibleTimer = null; }
     dispose();
     clearRecheck();
     checkSeq++;

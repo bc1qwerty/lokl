@@ -216,6 +216,45 @@ describe('sync-controller', () => {
     expect(isSyncing()).toBe(true);
   });
 
+  it('화면 복귀 재확인은 10초에 한 번이다(60초였을 때는 결제하고 바로 돌아오면 안 켜졌다)', async () => {
+    mockSubscription(false);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    const calls = () => (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    const base = Date.now() + 1_000_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(base);
+    try {
+      const before = calls();
+      document.dispatchEvent(new Event('visibilitychange'));
+      await tick();
+      expect(calls()).toBe(before + 1);
+      now.mockReturnValue(base + 5_000);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await tick();
+      expect(calls()).toBe(before + 1);
+      now.mockReturnValue(base + 11_000);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await tick();
+      expect(calls()).toBe(before + 2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('설정 패널이 방금 읽은 구독 상태를 넘기면 서버에 다시 묻지 않고 켠다', async () => {
+    mockSubscription(false);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(false);
+    const calls = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    notifySubscriptionChanged(true);
+    await tick();
+    expect(isSyncing()).toBe(true);
+    expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(calls);
+  });
+
   it('돌던 동기화가 구독 만료로 꺼지면 한 번 알린다', async () => {
     toasts.value = [];
     mockSubscription(true);

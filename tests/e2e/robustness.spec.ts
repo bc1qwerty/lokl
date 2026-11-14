@@ -285,3 +285,37 @@ for (const size of [{ width: 1280, height: 720 }, { width: 1280, height: 600 }, 
     }
   });
 }
+
+// 2026-11-14. Notes imported from a Mac folder before ids were normalised are stored decomposed (NFD).
+// Importing the same folder again — the documented way to finish an interrupted import — looked them
+// up by the composed id, found nothing, and wrote every note a second time. And a rename inside such a
+// folder composed the folder part too, so the same folder showed up twice in the tree.
+test('a vault with decomposed (NFD) names: importing the folder again adds nothing, and a rename keeps one folder', async ({ page }, testInfo) => {
+  const nfd = (s: string) => s.normalize('NFD');
+  const ids = [nfd('회의록.md'), `${nfd('일기')}/${nfd('월요일.md')}`, `${nfd('일기')}/${nfd('화요일.md')}`];
+  await withVault(page, Object.fromEntries(ids.map((id, i) => [id, `body ${i}`])));
+  await page.getByRole('button', { name: 'Start fresh' }).click();
+  await expect(page.locator('.toolbar')).toBeVisible({ timeout: 10_000 });
+  // the vault as an older version left it: the very same notes, ids decomposed
+  const fs = await import('fs');
+  const file = testInfo.outputPath('nfd-vault.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, notes: ids.map((_id, i) => ({ _id, content: `body ${i}` })) }));
+  await page.getByTitle('Settings').click();
+  await page.locator('input[type="file"][accept=".json"]').setInputFiles(file);
+  await expect(page.locator('.toast-success')).toBeVisible({ timeout: 8_000 });
+  await expect.poll(() => noteIds(page)).toEqual([...ids].sort());
+
+  await page.getByRole('button', { name: 'Import from folder' }).click();
+  await expect(page.locator('.toast', { hasText: '3 already in the vault' })).toBeVisible({ timeout: 10_000 });
+  expect(await noteIds(page)).toEqual([...ids].sort()); // no composed twins
+  await page.keyboard.press('Escape');
+
+  // rename inside the decomposed folder: the note stays in that folder, and the tree shows it once
+  const row = page.locator('.file-tree .tree-item', { has: page.getByText(nfd('월요일'), { exact: true }) });
+  await row.click({ button: 'right' });
+  await page.locator('.context-menu-item', { hasText: 'Rename' }).click();
+  await page.locator('.new-file-input').fill('수요일');
+  await page.getByRole('button', { name: 'Rename' }).click();
+  await expect.poll(() => noteIds(page)).toContain(`${nfd('일기')}/수요일.md`);
+  await expect(page.locator('.file-tree .tree-item[aria-expanded]')).toHaveCount(1);
+});

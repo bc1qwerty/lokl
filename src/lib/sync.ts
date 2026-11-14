@@ -74,12 +74,24 @@ export function __setSyncTiming(t: Partial<typeof timing> | null): void {
 // that keeps delivering is never cut. The long poll is asked to answer within LONGPOLL_MS (no
 // heartbeat: a deadline must not depend on single bytes passing a compressing proxy).
 const LONGPOLL_MS = 25_000;
-const NET = { first: 60_000, idle: 60_000, slack: 30_000, uploadBytesPerSec: 20_000 };
+// uploadBytesPerSec is only a first guess at the uplink. A body that does not fit its deadline is not
+// retried as it was (that re-sent megabytes every few minutes and never finished): the push sends
+// smaller batches, and when a single note still does not fit, the guess itself is halved (uploadScale).
+const NET = { first: 60_000, idle: 60_000, slack: 30_000, uploadBytesPerSec: 10_000 };
 const net = { ...NET, longpoll: LONGPOLL_MS };
+const UPLOAD_SCALE_MAX = 64;
+// However slow the guess gets, a request that has not been answered after this long is dead.
+const UPLOAD_MAX_MS = 60 * 60_000;
+let uploadScale = 1;
+// Set when the deadline of a request that carried a body ran out — the push reads it to tell
+// "too slow for this much" from every other failure (the error PouchDB hands back does not say).
+let uploadTimedOut = false;
 
 /** Test hook: shorten the request deadlines. */
 export function __setNetTiming(n: Partial<typeof net> | null): void {
   Object.assign(net, NET, { longpoll: LONGPOLL_MS }, n ?? {});
+  uploadScale = 1;
+  uploadTimedOut = false;
 }
 
 type FetchFn = (url: string | Request, opts?: RequestInit) => Promise<Response>;
@@ -90,10 +102,12 @@ export async function fetchWithDeadline(doFetch: FetchFn, url: string | Request,
   if (outer?.aborted) ctl.abort();
   else outer?.addEventListener('abort', () => ctl.abort(), { once: true });
   const longpoll = /[?&]feed=longpoll/.test(typeof url === 'string' ? url : url.url);
-  const bodyLen = typeof opts.body === 'string' ? opts.body.length : 0;
-  const first = longpoll ? net.longpoll + net.slack : net.first + (bodyLen / net.uploadBytesPerSec) * 1000;
+  // Bytes, not characters: Korean text is three bytes a character, so counting characters asked
+  // for three times the uplink the deadline claimed to allow for.
+  const bodyLen = typeof opts.body === 'string' ? new TextEncoder().encode(opts.body).length : 0;
+  const first = longpoll ? net.longpoll + net.slack : net.first + Math.min(UPLOAD_MAX_MS, (bodyLen * uploadScale / net.uploadBytesPerSec) * 1000);
   const idle = longpoll ? net.longpoll + net.slack : net.idle;
-  let timer = setTimeout(() => ctl.abort(), first);
+  let timer = setTimeout(() => { if (bodyLen > 0) uploadTimedOut = true; ctl.abort(); }, first);
   try {
     const res = await doFetch(url, { ...opts, signal: ctl.signal });
     const reader = res.body?.getReader();
@@ -175,6 +189,15 @@ function notSkipped(doc: { _id: string }): boolean {
 
 let session: Session | null = null;
 let quotaWarned = false;
+// Named once per page: the sync restarts on its own (pull restart, wake after an error) and each
+// start used to name the same skipped note again.
+const skipNamed = new Set<string>();
+function nameSkipped(id: string, rev: string): void {
+  const key = `${id}@${rev}`;
+  if (skipNamed.has(key)) return;
+  skipNamed.add(key);
+  toast.error(tf(t.value.msg.noteTooLargeNamed, { name: id }));
+}
 let pullRestarts = 0;
 const TOO_LARGE = { status: 413 };
 let subscriptionLost: (() => void) | null = null;
@@ -263,6 +286,7 @@ async function runPush(s: Session): Promise<void> {
   if (s.cancelled || s.pushing) return;
   if (!s.force && s.pending.size === 0 && !s.probe) { recompute(s); return; }
   s.pushing = true;
+  uploadTimedOut = false;
   const probing = s.probe;
   const catchUp = s.lastPushEnd === 0 && s.pending.size === 0;
   // A probe carries one note; everything else is still unsent.
@@ -300,14 +324,27 @@ async function runPush(s: Session): Promise<void> {
     s.force = true; // whatever this run carried is still unsent
     const e = err as SyncError;
     const tooLarge = e?.status === 413 && e.code === 'REQUEST_TOO_LARGE';
+    const timedOut = uploadTimedOut;
+    uploadTimedOut = false;
     let next: { id: string; rev: string } | null = null;
-    if (tooLarge && probing) {
+    if (timedOut && (s.batchSize > 1 || uploadScale < UPLOAD_SCALE_MAX)) {
+      // The upload did not fit its deadline: a slow uplink, or a dead one. Sending the same batch
+      // again would time out again — send less (batches that get through move the checkpoint) and
+      // allow it longer. The state says "retrying" meanwhile; a dead connection ends up on the
+      // ordinary backoff below.
+      // Both at once: how many notes the batch really held is not known here (a single big note
+      // gains nothing from a smaller batch size).
+      if (!probing) s.batchSize = Math.ceil(s.batchSize / 2);
+      uploadScale = Math.min(UPLOAD_SCALE_MAX, uploadScale * 2);
+      s.pushErr = err;
+      schedulePush(s, timing.backoffBase);
+    } else if (tooLarge && probing) {
       // The note alone is over the request limit: name it once and leave it out, so the notes
       // behind it are not held back with it. Editing the note puts it back in.
       s.probe = null;
       s.skip.add(probing.id);
       writeSkipped({ ...readSkipped(), [probing.id]: probing.rev });
-      toast.error(tf(t.value.msg.noteTooLargeNamed, { name: probing.id }));
+      nameSkipped(probing.id, probing.rev);
       schedulePush(s, 0);
     } else if (tooLarge && (next = await largestUntried(s))) {
       // Try the biggest note on its own before shrinking the batch: halving down to one note at a
@@ -358,7 +395,7 @@ async function loadSkipped(s: Session): Promise<void> {
       if (!r.id || !r.value || r.value.deleted || r.value.rev !== map[r.id]) continue;
       still[r.id] = map[r.id];
       s.skip.add(r.id);
-      toast.error(tf(t.value.msg.noteTooLargeNamed, { name: r.id }));
+      nameSkipped(r.id, map[r.id]);
     }
   } catch { return; }
   writeSkipped(still);

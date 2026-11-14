@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
 import { setDB, getDB, getNote, putNote, deleteNote, listNotes, listConflictSiblings, listConflicts, resolveConflict, restoreNote, purgeNote, purgeTrashed, restoreTrashed, listTrash, sweepTrash, atomicRename } from '../../src/lib/db';
+import { buildFileTree as buildTree, atomicRename as renameNote } from '../../src/lib/db';
+import { errorText } from '../../src/lib/error-text';
 import type { NoteDoc } from '../../src/lib/db';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
@@ -520,5 +522,29 @@ describe('isStorageFull', () => {
     expect(isStorageFull({ name: 'indexed_db_went_bad', status: 500, reason: 'InvalidStateError' })).toBe(false);
     expect(isStorageFull(new Error('disk says no'))).toBe(false);
     expect(isStorageFull(null)).toBe(false);
+  });
+});
+
+describe('folders spelled two ways', () => {
+  it('buildFileTree shows one folder for NFC and NFD spellings of the same name', () => {
+    const nfd = '폴더'.normalize('NFD');
+    const note = (id: string) => ({ _id: id, content: '', title: '', tags: [], links: [], createdAt: '', updatedAt: '' }) as any;
+    const tree = buildTree([note(`${nfd}/a.md`), note('폴더/b.md'), note('c.md')]);
+    const dirs = tree.filter(e => e.kind === 'directory');
+    expect(dirs).toHaveLength(1);
+    expect(dirs[0].children!.map(c => c.path).sort()).toEqual([`${nfd}/a.md`, '폴더/b.md'].sort());
+  });
+});
+
+describe('errors the app throws itself', () => {
+  it('carry a code, so the toast is not the English message', async () => {
+    await putNote('one.md', '1');
+    await putNote('two.md', '2');
+    const err = await renameNote('one.md', 'two.md').catch(e => e);
+    expect(err.code).toBe('DEST_EXISTS');
+    expect(errorText(err)).toBe('A note with that name already exists');
+    const gone = await renameNote('nope.md', 'other.md').catch(e => e);
+    expect(gone.code).toBe('SOURCE_MISSING');
+    expect(errorText(new Error('plain'))).toBe('plain');
   });
 });

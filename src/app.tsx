@@ -12,7 +12,8 @@ import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchCh
 import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
-import { normalizeNotePath, nfc } from './lib/note-path';
+import { normalizeNotePath, nfc, withExistingFolders } from './lib/note-path';
+import { errorText } from './lib/error-text';
 import { allFilePaths } from './lib/store';
 import { tf } from './i18n';
 import { interruptedImport, clearInterruptedImport, rememberInterruptedToast } from './lib/migrate';
@@ -297,7 +298,9 @@ export function App() {
     if (!typedPath) { toast.error(tf(t.value.msg.notUsableName, { name })); return; }
     // A note imported from a Mac folder may carry the same name in another Unicode form (NFD);
     // it is the same note to the eye — open it instead of creating a twin.
-    const path = allFilePaths.value.find((p) => p !== typedPath && nfc(p) === typedPath) ?? typedPath;
+    // Both spellings in the vault already: the one typed is the one meant.
+    const twin = allFilePaths.value.includes(typedPath) ? undefined : allFilePaths.value.find((p) => nfc(p) === typedPath);
+    const path = twin ?? withExistingFolders(typedPath, allFilePaths.value);
     const swapped = /^_/.test(name.replace(/^[\s/]+/, ''));
     try {
       // An existing note with this name is opened, never blanked.
@@ -351,8 +354,10 @@ export function App() {
     const typed = renameValue.value.trim();
     if (!typed) return;
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
-    const newPath = normalizeNotePath(dir + typed);
-    if (!newPath) { toast.error(tf(t.value.msg.notUsableName, { name: typed })); return; }
+    const typedPath = normalizeNotePath(dir + typed);
+    if (!typedPath) { toast.error(tf(t.value.msg.notUsableName, { name: typed })); return; }
+    // The folder keeps the spelling it has (see withExistingFolders); only the name is new.
+    const newPath = withExistingFolders(typedPath, allFilePaths.value);
     if (newPath === oldPath) { renameOpen.value = false; return; }
     if (!dir && typed.startsWith('_')) toast.info(tf(t.value.msg.underscoreRenamed, { path: newPath }));
     // The old id's tombstone reaches the change feed while we are still here;
@@ -381,7 +386,7 @@ export function App() {
       refocusTree(newPath);
     } catch (e: any) {
       console.error('Rename failed:', e);
-      toast.error(tf(t.value.msg.renameFailed, { error: e?.message ?? t.value.msg.unknownError }));
+      toast.error(tf(t.value.msg.renameFailed, { error: errorText(e) }));
     } finally {
       done();
     }
