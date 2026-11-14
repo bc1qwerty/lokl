@@ -272,6 +272,55 @@ describe('push pacing, backoff and refused writes', () => {
     expect(syncState.value.error).toBe('A note is too large to sync');
   });
 
+  it('a note over the limit is named and left out; the notes behind it still upload', async () => {
+    __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20, skipBytes: 500 });
+    const tooBig = (docs: any[]) => docs.some(d => (d.content?.length ?? 0) > 500);
+    const { remoteDB } = countingRemote('remote-skip', (docs) =>
+      (tooBig(docs as any[]) ? { status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' } : null));
+    await putNote('a.md', 'small a');
+    await putNote('giant.md', 'x'.repeat(2000));
+    await putNote('z.md', 'small z');
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 2);
+    await until(() => syncState.value.status === 'error');
+    expect(syncState.value.error).toBe('A note is too large to sync'); // never "Synced" with a note left behind
+    expect(toasts.value.filter(t => /giant\.md/.test(t.message))).toHaveLength(1);
+    // later edits to other notes keep flowing
+    await putNote('z.md', 'small z2');
+    await until(async () => (await remoteDB.get('z.md') as any).content === 'small z2');
+    expect(toasts.value.filter(t => /giant\.md/.test(t.message))).toHaveLength(1);
+    // shortened: it goes up and the state clears
+    await putNote('giant.md', 'short now');
+    await until(async () => (await remoteDB.get('giant.md').catch(() => null) as any)?.content === 'short now');
+    await until(() => syncState.value.status === 'synced');
+  });
+
+  it('a pulled change does not cost a push round of its own', async () => {
+    const { remoteDB } = countingRemote('remote-pullonly');
+    // every push round asks the server what it is missing, whether or not anything is sent
+    let diffs = 0;
+    const realDiff = remoteDB.revsDiff.bind(remoteDB);
+    (remoteDB as any).revsDiff = (...a: unknown[]) => { diffs++; return (realDiff as any)(...a); };
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    await wait(100);
+    const before = diffs;
+    for (let i = 0; i < 5; i++) { await remoteDB.put({ _id: `in${i}.md`, content: `from elsewhere ${i}`, mtime: Date.now() } as any); await wait(30); }
+    await until(async () => (await getDB().allDocs()).rows.length === 5);
+    await wait(400); // well past debounce and interval
+    expect(diffs).toBe(before);
+    expect(syncState.value.status).toBe('synced');
+  });
+
+  it('the first edit after start leaves after the debounce, not a whole interval later', async () => {
+    __setSyncTiming({ debounce: 20, interval: 3000, backoffBase: 20 });
+    const { remoteDB } = countingRemote('remote-first');
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    await putNote('first.md', 'hello');
+    await until(async () => !!(await remoteDB.get('first.md').catch(() => null)), 1000);
+  });
+
   it('a lapsed subscription is named and reported once, not per retry', async () => {
     countingRemote('remote-lapsed', () => ({ status: 403, name: 'forbidden', code: 'NO_SUBSCRIPTION', message: 'Subscription required' }));
     let lost = 0;

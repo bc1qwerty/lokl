@@ -5,12 +5,13 @@
 // — 구독 없이 startSync 를 불러도 서버가 거부해 에러 상태만 띄운다.
 import { effect } from '@preact/signals';
 import { authState, syncState } from './store';
-import { startSync, stopSync, onSubscriptionLost } from './sync';
+import { startSync, stopSync, isSyncing, wakeSync, onSubscriptionLost } from './sync';
 import { dbEpoch } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
 let checkSeq = 0;
+let syncedEpoch = -1;
 
 // 로컬 DB 는 브라우저당 하나라, 다른 계정으로 로그인해 동기화가 켜지면 앞 계정의 노트가
 // 새 계정 서버로 올라가고 두 계정의 노트가 섞인다. 마지막으로 동기화한 계정을 기억해 두고,
@@ -34,31 +35,59 @@ function ownerAllows(pubkey: string | undefined): boolean {
   return true;
 }
 
-async function hasActiveSubscription(): Promise<boolean> {
+// true/false = 서버가 답했다. null = 모른다(네트워크 순단·5xx·429) — 이걸 «구독 없음» 으로 읽으면
+// api 재시작 중의 502 한 번에 잘 돌던 동기화가 세션 내내 조용히 꺼진다.
+async function hasActiveSubscription(): Promise<boolean | null> {
   try {
     const res = await fetch(`${API_URL}/lokl/subscription`, { credentials: 'include' });
-    if (!res.ok) return false;
+    if (res.status === 401 || res.status === 403) return false;
+    if (!res.ok) return null;
     const data = await res.json();
     return data?.active === true;
   } catch {
-    return false;
+    return null;
   }
+}
+
+const RECHECK_MAX_MS = 5 * 60_000;
+let recheckBase = 5000;
+let recheckTimer: ReturnType<typeof setTimeout> | null = null;
+let recheckFails = 0;
+
+/** Test hook: shorten the re-check pacing. */
+export function __setRecheckBase(ms: number | null): void {
+  recheckBase = ms ?? 5000;
+}
+
+function clearRecheck(): void {
+  if (recheckTimer) clearTimeout(recheckTimer);
+  recheckTimer = null;
 }
 
 async function evaluate(): Promise<void> {
   const seq = ++checkSeq;
+  clearRecheck();
   if (authState.value.status !== 'authenticated') {
+    recheckFails = 0;
     stopSync();
     return;
   }
   const active = await hasActiveSubscription();
   // 확인 중에 로그아웃/재로그인이 겹치면 낡은 응답으로 켜고 끄지 않는다.
   if (seq !== checkSeq) return;
+  if (active === null) {
+    // 켜져 있으면 켜진 채로, 꺼져 있으면 꺼진 채로 두고 다시 묻는다.
+    const delay = Math.min(RECHECK_MAX_MS, recheckBase * 2 ** Math.min(recheckFails++, 10));
+    recheckTimer = setTimeout(() => { recheckTimer = null; void evaluate(); }, delay);
+    return;
+  }
+  recheckFails = 0;
   if (active && !ownerAllows(authState.value.pubkey)) {
     stopSync();
     syncState.value = { status: 'error', error: 'Sync is off: these notes belong to another account' };
   } else if (active) {
-    startSync();
+    // 이미 돌고 있는 동기화를 재확인 때문에 다시 시작하지 않는다(다시 시작하면 전체 대조를 한 번 더 한다).
+    if (!isSyncing() || syncedEpoch !== dbEpoch.value) { syncedEpoch = dbEpoch.value; startSync(); }
   } else {
     stopSync();
   }
@@ -85,10 +114,13 @@ export function initSyncController(): () => void {
   // 내내 굳지 않도록, 네트워크 복귀 시 재평가한다.
   // The server refused a sync request for lack of a subscription (it lapsed mid-session).
   onSubscriptionLost(() => { void evaluate(); });
-  const onOnline = () => { void evaluate(); };
+  // 돌던 동기화가 backoff(최대 5분) 중이면 바로 깨운다.
+  const onOnline = () => { wakeSync(); void evaluate(); };
   window.addEventListener('online', onOnline);
   return () => {
     dispose();
+    clearRecheck();
+    checkSeq++;
     window.removeEventListener('online', onOnline);
     onSubscriptionLost(null);
     stopSync();

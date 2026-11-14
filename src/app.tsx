@@ -8,7 +8,7 @@ import {
   isLoading, addTab, closeTab, settings, currentFileContent,
 } from './lib/store';
 import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, applyChange, expectLocalRemoval } from './lib/autosave';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch, compactOnce } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch, compactOnce, isStorageFull, deviceStorageFull, STORAGE_FULL_MESSAGE } from './lib/db';
 import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
@@ -147,6 +147,8 @@ export function App() {
       console.error('Storage unavailable:', e);
       dbError.value = e?.message ?? 'IndexedDB error';
       isLoading.value = false;
+      if (isStorageFull(e)) dbError.value = STORAGE_FULL_MESSAGE;
+      else void deviceStorageFull().then((full) => { if (full) dbError.value = STORAGE_FULL_MESSAGE; });
     });
     return () => { stop(); stopSyncController(); };
   }, []);
@@ -495,7 +497,7 @@ export function App() {
         <p class="welcome-tagline">Storage unavailable: {dbError.value}</p>
         <p class="welcome-tagline">
           Your notes were not deleted — the browser could not open local storage.
-          Reload to retry; private browsing can block IndexedDB.
+          {dbError.value === STORAGE_FULL_MESSAGE ? '' : ' Reload to retry; private browsing can block IndexedDB.'}
         </p>
       </main>
     );

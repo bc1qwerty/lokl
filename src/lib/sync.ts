@@ -58,11 +58,13 @@ const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 const PUSH_BATCH = 100;
 const BACKOFF_MAX_MS = 5 * 60_000;
 const SUB_RECHECK_MS = 60_000;
-const timing = { debounce: 2000, interval: 15_000, backoffBase: 1000 };
+// skipBytes: a note this big can by itself be over the proxy's 16MB request limit once JSON-escaped.
+const TIMING = { debounce: 2000, interval: 15_000, backoffBase: 1000, skipBytes: 8 * 1024 * 1024 };
+const timing = { ...TIMING };
 
 /** Test hook: shorten the push pacing. */
 export function __setSyncTiming(t: Partial<typeof timing> | null): void {
-  Object.assign(timing, t ?? { debounce: 2000, interval: 15_000, backoffBase: 1000 });
+  Object.assign(timing, TIMING, t ?? {});
 }
 
 interface Session {
@@ -84,11 +86,17 @@ interface Session {
   // Local revisions not yet offered to the server. What the pull itself wrote is taken back out,
   // so an incoming change does not cost a push round of its own.
   pending: Set<string>;
+  // Revisions the pull wrote whose change-feed event has not arrived yet (it comes after the
+  // pull's own 'change'), so the feed can tell them from local edits.
+  pulled: Set<string>;
+  // Notes that alone exceed the request limit. Left out so the rest still uploads.
+  skip: Set<string>;
   force: boolean;
 }
 
 let session: Session | null = null;
 let quotaWarned = false;
+const TOO_LARGE = { status: 413 };
 let subscriptionLost: (() => void) | null = null;
 let subLostAt = 0;
 
@@ -142,7 +150,8 @@ export function onPaused(err?: unknown): void {
 
 function recompute(s: Session): void {
   if (s !== session) return; // a cancelled sync must not move the state
-  const err = s.pushErr ?? s.pullErr;
+  // A skipped note is not synced, whatever else went through.
+  const err = s.pushErr ?? s.pullErr ?? (s.skip.size > 0 ? TOO_LARGE : null);
   if (err) onPaused(err);
   else if (s.pullPaused && !s.pushing && !s.force && s.pending.size === 0) onPaused();
   else updateSyncState('syncing');
@@ -172,19 +181,28 @@ async function runPush(s: Session): Promise<void> {
   if (s.cancelled || s.pushing) return;
   if (!s.force && s.pending.size === 0) { recompute(s); return; }
   s.pushing = true;
+  const catchUp = s.lastPushEnd === 0 && s.pending.size === 0;
   s.force = false;
   s.pending = new Set();
   recompute(s);
   try {
-    const rep = s.local.replicate.to(s.remote, { batch_size: s.batchSize });
+    const opts: PouchDB.Replication.ReplicateOptions = { batch_size: s.batchSize };
+    if (s.skip.size > 0) {
+      const all = await s.local.changes({ since: 0 });
+      opts.doc_ids = all.results.map(r => r.id).filter(id => !s.skip.has(id));
+    }
+    const rep = s.local.replicate.to(s.remote, opts);
     s.pushRep = rep;
-    await rep;
+    const res = await rep;
     if (s.cancelled) return;
     s.pushing = false;
     s.pushErr = null;
     s.pushFails = 0;
-    s.lastPushEnd = Date.now();
-    if (s.pending.size > 0) schedulePush(s, timing.interval);
+    // The catch-up at start usually sends nothing; pacing from it would hold the first edit back
+    // for a whole interval. Every later round paces, sent or not (a second tab's rounds are
+    // mostly empty — the first tab got there first — and must not run on the short debounce).
+    if (!catchUp || (res?.docs_written ?? 0) > 0) s.lastPushEnd = Date.now();
+    if (s.pending.size > 0) schedulePush(s, Math.max(timing.debounce, s.lastPushEnd + timing.interval - Date.now()));
   } catch (err) {
     if (s.cancelled) return;
     s.pushing = false;
@@ -195,6 +213,8 @@ async function runPush(s: Session): Promise<void> {
       // ones that do move the checkpoint.
       s.batchSize = Math.ceil(s.batchSize / 2);
       schedulePush(s, 0);
+    } else if (e?.status === 413 && e.code === 'REQUEST_TOO_LARGE' && await skipLargest(s)) {
+      schedulePush(s, 0);
     } else {
       s.pushErr = err;
       noteFailure(s, err);
@@ -202,6 +222,27 @@ async function runPush(s: Session): Promise<void> {
     }
   }
   recompute(s);
+}
+
+/** One note alone is over the request limit: name it once and leave it out, so the notes
+ *  behind it are not held back with it. Editing the note puts it back in. */
+async function skipLargest(s: Session): Promise<boolean> {
+  try {
+    const all = await s.local.allDocs({ include_docs: true });
+    let worst: { id: string; size: number } | null = null;
+    for (const r of all.rows) {
+      const content = (r.doc as NoteDoc | undefined)?.content ?? '';
+      // length is a lower bound on bytes; only encode the candidates.
+      if (s.skip.has(r.id) || content.length * 3 < timing.skipBytes) continue;
+      const size = new TextEncoder().encode(content).length;
+      if (size > (worst?.size ?? 0)) worst = { id: r.id, size };
+    }
+    // No note that big: the cause is something else — keep the ordinary error and backoff.
+    if (s.cancelled || !worst || worst.size < timing.skipBytes) return false;
+    s.skip.add(worst.id);
+    toast.error(`"${worst.id}" is too large to sync — it stays on this device. Shorten or split it to sync it again.`);
+    return true;
+  } catch { return false; }
 }
 
 export function startSync(): void {
@@ -221,7 +262,7 @@ export function startSync(): void {
     cancelled: false, local, remote,
     pullPaused: false, pullErr: null, pullFails: 0,
     pushing: false, pushErr: null, pushFails: 0, pushTimer: null, lastPushEnd: 0,
-    batchSize: PUSH_BATCH, pending: new Set(), force: true,
+    batchSize: PUSH_BATCH, pending: new Set(), pulled: new Set(), skip: new Set(), force: true,
   };
   session = s;
   updateSyncState('syncing');
@@ -234,7 +275,11 @@ export function startSync(): void {
   })
     .on('change', (info) => {
       s.pullFails = 0;
-      for (const d of info.docs ?? []) s.pending.delete(`${d._id}@${(d as { _rev?: string })._rev}`);
+      if (s.pulled.size > 5000) s.pulled.clear();
+      for (const d of info.docs ?? []) {
+        const key = `${d._id}@${(d as { _rev?: string })._rev}`;
+        if (!s.pending.delete(key)) s.pulled.add(key);
+      }
       resolveAllConflicts().catch(err => console.error('Conflict resolve failed:', err));
       recompute(s);
     })
@@ -255,7 +300,10 @@ export function startSync(): void {
 
   s.feed = local.changes({ since: 'now', live: true })
     .on('change', (c) => {
-      s.pending.add(`${c.id}@${c.changes[0]?.rev}`);
+      const key = `${c.id}@${c.changes[0]?.rev}`;
+      if (s.pulled.delete(key)) return; // the pull wrote this one
+      s.skip.delete(c.id); // edited: it may fit now
+      s.pending.add(key);
       // Already waiting (pacing or backoff) or running: this change rides along. Re-arming here
       // would let steady typing postpone the push forever.
       if (s.pushing || s.pushTimer) { recompute(s); return; }

@@ -1,6 +1,6 @@
 import { effect, signal, batch } from '@preact/signals';
 import { currentFilePath, currentFileContent, savedContent, isDirty, openTabs, closeTab } from './store';
-import { putNote, isConnectionLost, reopenDB } from './db';
+import { putNote, isConnectionLost, reopenDB, isStorageFull, deviceStorageFull, STORAGE_FULL_MESSAGE } from './db';
 import type { NoteDoc } from './db';
 import { updateLinksForFile } from './markdown';
 import { indexFile } from './search';
@@ -166,8 +166,9 @@ async function doSave(path: string, content: string): Promise<boolean> {
     console.error('Save failed:', e);
     // One toast per failure streak — the retry below would otherwise repeat it.
     if (failStreak++ === 0) {
-      if (e?.name === 'QuotaExceededError' || e?.status === 507) {
-        toast.error('Storage full — empty trash to free space');
+      if (isStorageFull(e) || (isConnectionLost(e) && await deviceStorageFull())) {
+        // Emptying the trash does not help here: once the browser is out of space even deletes fail.
+        toast.error(STORAGE_FULL_MESSAGE);
       } else {
         toast.error(`Save failed: ${e?.message ?? 'unknown error'} — retrying`);
       }

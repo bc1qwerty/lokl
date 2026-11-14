@@ -211,6 +211,37 @@ describe('autosave', () => {
   });
 });
 
+describe('the device is out of space', () => {
+  // PouchDB reports a full disk as indexed_db_went_bad / reason QuotaExceededError — neither
+  // `name === QuotaExceededError` nor status 507, which is all the old check looked for.
+  it('says so truthfully, keeps the text in the editor and keeps retrying', async () => {
+    stop();
+    stop = startAutosave(DELAY, 40);
+    await putNote('n.md', '');
+    await open('n.md');
+    const db = getDB() as any;
+    const realPut = db.put.bind(db);
+    let full = true;
+    db.put = (...a: unknown[]) => (full
+      // (the real name is indexed_db_went_bad, which also reopens the handle — the mock lives on this one)
+      ? Promise.reject({ name: 'unknown_error', status: 500, reason: 'QuotaExceededError', message: 'unknown' })
+      : realPut(...a));
+    try {
+      currentFileContent.value = 'typed on a full disk';
+      await until(() => toasts.value.length > 0);
+      expect(toasts.value[0].message).toMatch(/out of storage space/);
+      expect(toasts.value[0].message).not.toMatch(/trash/i); // emptying the trash cannot work: deletes fail too
+      expect(currentFileContent.value).toBe('typed on a full disk');
+      expect(isDirty.value).toBe(true);
+      full = false; // space freed
+      await until(async () => (await getNote('n.md'))?.content === 'typed on a full disk', 4000);
+      expect(toasts.value.length).toBe(1);
+    } finally {
+      db.put = realPut;
+    }
+  });
+});
+
 describe('applyChange (the change feed meeting the editor)', () => {
   // A rename/delete in another tab or device arrives as a tombstone with no
   // content. It was adopted like an edit: the editor went blank, turned dirty,

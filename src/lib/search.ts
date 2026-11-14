@@ -3,6 +3,9 @@ import MiniSearch from 'minisearch';
 const index = new MiniSearch<{ id: string; title: string; path: string; content: string }>({
   fields: ['title', 'content'],
   storeFields: ['title', 'path'],
+  // The default vacuum rests between batches; a clearIndex() landing in one of those rests swaps
+  // the tree under it and it throws (uncaught). One uninterrupted pass cannot be interleaved.
+  autoVacuum: { batchSize: Number.MAX_SAFE_INTEGER },
   searchOptions: {
     boost: { title: 3 },
     fuzzy: 0.2,

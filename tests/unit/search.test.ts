@@ -31,4 +31,25 @@ describe('search index', () => {
     expect(search('hello').length).toBe(0);
     expect(search('world').length).toBe(0);
   });
+
+  // MiniSearch's default vacuum rests between batches. clearIndex() in one of those rests swapped
+  // the tree under it: "Cannot read properties of undefined (reading 'size')", uncaught.
+  it('clearIndex during a vacuum does not throw', async () => {
+    const errs: unknown[] = [];
+    const onErr = (e: unknown) => { errs.push(e); };
+    process.on('unhandledRejection', onErr);
+    try {
+      const body = (i: number, r: number) => Array.from({ length: 30 }, (_, k) => 'w' + ((r * 977 + i * 31 + k) * 7919 % 50000).toString(36)).join(' ');
+      for (let i = 0; i < 4000; i++) indexFile(`n${i}.md`, body(i, 0));
+      for (let i = 0; i < 1000; i++) indexFile(`n${i}.md`, body(i, 1));
+      await new Promise(r => setTimeout(r, 5));
+      clearIndex();
+      for (let i = 0; i < 300; i++) indexFile(`m${i}.md`, body(i, 2));
+      await new Promise(r => setTimeout(r, 600));
+      expect(errs).toEqual([]);
+      expect(search('m5').length).toBeGreaterThan(0);
+    } finally {
+      process.off('unhandledRejection', onErr);
+    }
+  });
 });

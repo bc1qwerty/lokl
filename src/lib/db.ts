@@ -55,6 +55,25 @@ export async function compactOnce(): Promise<void> {
 /** True for the errors a dead IndexedDB connection produces. The browser can
  *  close it under us (storage pressure, an aborted transaction PouchDB treats
  *  as fatal); from then on every read and write on that handle fails. */
+/** The device (not the sync quota) is out of space. PouchDB reports it as
+ *  `{ name: 'indexed_db_went_bad', status: 500, reason: 'QuotaExceededError' }`, not by name. */
+export function isStorageFull(e: unknown): boolean {
+  const x = e as { name?: string; reason?: string; message?: string } | null | undefined;
+  return x?.name === 'QuotaExceededError' || x?.reason === 'QuotaExceededError'
+    || /QuotaExceeded/i.test(String(x?.message ?? ''));
+}
+
+/** The first failure of a full device is often just "connection is closing" — ask the browser. */
+export async function deviceStorageFull(): Promise<boolean> {
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (!est?.quota || est.usage == null) return false;
+    return est.quota - est.usage < 1024 * 1024 || est.usage / est.quota > 0.98;
+  } catch { return false; }
+}
+
+export const STORAGE_FULL_MESSAGE = 'This device is out of storage space — notes cannot be saved. Copy what you are writing somewhere safe, free up space on the device, then reload.';
+
 export function isConnectionLost(e: unknown): boolean {
   const err = e as { name?: string; message?: string } | null;
   const text = `${err?.name ?? ''} ${err?.message ?? ''}`;

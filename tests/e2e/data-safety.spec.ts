@@ -257,6 +257,8 @@ for (const mode of ['abort', 'dead'] as const) {
     await page.evaluate(() => { (window as unknown as { __failWrites: boolean }).__failWrites = true; });
     await type(page, 'typed during the outage');
     await expect(page.locator('.toast-error')).toBeVisible({ timeout: 8_000 });
+    // No advice that cannot work here (the old text said to empty the trash; with storage failing, deletes fail too).
+    await expect(page.locator('.toast-error')).not.toContainText(/trash/i);
     await expect(page.locator('.toolbar')).toContainText('Unsaved');
     await expect(page.locator('.cm-content')).toContainText('typed during the outage');
 

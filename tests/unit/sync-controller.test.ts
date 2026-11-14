@@ -4,7 +4,7 @@ import { setDB } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 import { stopSync, isSyncing, __setRemoteFactory } from '../../src/lib/sync';
 import { authState, syncState } from '../../src/lib/store';
-import { initSyncController, notifySubscriptionChanged } from '../../src/lib/sync-controller';
+import { initSyncController, notifySubscriptionChanged, __setRecheckBase } from '../../src/lib/sync-controller';
 
 function mockSubscription(active: boolean) {
   vi.stubGlobal('fetch', vi.fn(async () =>
@@ -63,10 +63,51 @@ describe('sync-controller', () => {
     expect(isSyncing()).toBe(false);
   });
 
-  it('구독 확인 fetch 가 죽어도 조용히 꺼진 상태를 유지한다', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network'); }));
+  // 실패(순단·5xx·429)는 «구독 없음» 이 아니라 «모름» 이다: 상태를 그대로 두고 다시 묻는다.
+  it('구독 확인이 실패하면 꺼진 채로 두되, 스스로 다시 확인해 켠다', async () => {
+    __setRecheckBase(20);
+    let up = false;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (!up) return new Response('bad gateway', { status: 502 });
+      return new Response(JSON.stringify({ active: true }), { status: 200 });
+    }));
     dispose = initSyncController();
     authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(false);
+    up = true; // online 이벤트도, 새로고침도 없이
+    await new Promise(r => setTimeout(r, 300));
+    expect(isSyncing()).toBe(true);
+    __setRecheckBase(null);
+  });
+
+  it('돌던 동기화는 구독 확인 실패(502·429·순단) 한 번으로 꺼지지 않는다', async () => {
+    __setRecheckBase(20);
+    mockSubscription(true);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(true);
+    for (const bad of [() => new Response('x', { status: 502 }), () => new Response('x', { status: 429 }), () => { throw new Error('network'); }]) {
+      vi.stubGlobal('fetch', vi.fn(async () => bad()));
+      window.dispatchEvent(new Event('online'));
+      await tick();
+      expect(isSyncing()).toBe(true);
+    }
+    // 서버가 분명히 답하면 끈다.
+    mockSubscription(false);
+    await new Promise(r => setTimeout(r, 500));
+    expect(isSyncing()).toBe(false);
+    __setRecheckBase(null);
+  });
+
+  it('401 은 «모름» 이 아니다 — 끈다', async () => {
+    mockSubscription(true);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 401 })));
+    notifySubscriptionChanged();
     await tick();
     expect(isSyncing()).toBe(false);
   });

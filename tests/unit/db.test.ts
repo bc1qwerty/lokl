@@ -497,3 +497,14 @@ describe('conflict resolution converges across devices', () => {
     expect(all.filter(d => d._conflicts?.length)).toEqual([]);
   });
 });
+
+describe('isStorageFull', () => {
+  it('recognises the shape PouchDB actually throws on a full device', async () => {
+    const { isStorageFull } = await import('../../src/lib/db');
+    expect(isStorageFull({ name: 'indexed_db_went_bad', status: 500, reason: 'QuotaExceededError' })).toBe(true);
+    expect(isStorageFull(new DOMException('x', 'QuotaExceededError'))).toBe(true);
+    expect(isStorageFull({ name: 'indexed_db_went_bad', status: 500, reason: 'InvalidStateError' })).toBe(false);
+    expect(isStorageFull(new Error('disk says no'))).toBe(false);
+    expect(isStorageFull(null)).toBe(false);
+  });
+});
