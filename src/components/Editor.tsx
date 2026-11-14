@@ -5,6 +5,7 @@ import { EditorState, Compartment, Transaction, type Extension } from '@codemirr
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { languages } from '@codemirror/language-data';
+import { codeLanguageFor } from '../lib/code-languages';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { currentFileContent, savedContent, currentFilePath, settings } from '../lib/store';
 import { theme } from '../lib/theme';
@@ -56,7 +57,7 @@ function fontSizeTheme(size: number) {
 function getExtensions(): Extension[] {
   const s = settings.value;
   return [
-    markdown({ base: markdownLanguage, codeLanguages: languages }),
+    markdown({ base: markdownLanguage, codeLanguages: codeLanguageFor(languages) }),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     EditorView.lineWrapping,
