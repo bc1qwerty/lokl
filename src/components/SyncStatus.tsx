@@ -16,7 +16,7 @@ export function SyncStatus() {
   const m = t.value.msg;
   const label =
     sync.status === 'synced' ? m.synced :
-    sync.status === 'syncing' ? m.syncing :
+    sync.status === 'syncing' ? (sync.error || m.syncing) :
     sync.status === 'error' ? (sync.error || m.syncError) :
     m.offline;
 

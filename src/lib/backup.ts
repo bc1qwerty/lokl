@@ -1,4 +1,5 @@
 import { getDB, getNote } from './db';
+import { appError } from './error-text';
 import { contentHash } from './note-path';
 import type { NoteDoc } from './db';
 
@@ -63,19 +64,20 @@ export async function exportZIP(): Promise<Blob> {
  */
 export async function importJSON(blob: Blob): Promise<{ imported: number; conflicts: number }> {
   const text = await blob.text();
-  const payload = JSON.parse(text) as BackupPayload;
+  let payload: BackupPayload;
+  try { payload = JSON.parse(text) as BackupPayload; } catch { throw appError('BACKUP_INVALID', 'Backup is not JSON'); }
   if (!payload || payload.version !== 1 || !Array.isArray(payload.notes)) {
-    throw new Error('Invalid backup payload');
+    throw appError('BACKUP_INVALID', 'Invalid backup payload');
   }
   // Validate everything before writing anything: a bad entry halfway through
   // used to throw and leave a partial import behind.
   for (const note of payload.notes) {
-    if (!note || typeof note !== 'object') throw new Error('Invalid backup payload: note is not an object');
+    if (!note || typeof note !== 'object') throw appError('BACKUP_BAD_NOTE', 'Invalid backup payload: note is not an object');
     if (typeof note._id !== 'string' || !note._id || note._id.startsWith('_')) {
-      throw new Error('Invalid backup payload: bad note id');
+      throw appError('BACKUP_BAD_NOTE', 'Invalid backup payload: bad note id', String(note._id ?? ''));
     }
     if (typeof note.content !== 'string') {
-      throw new Error(`Invalid backup payload: "${note._id}" has no text content`);
+      throw appError('BACKUP_BAD_NOTE', `Invalid backup payload: "${note._id}" has no text content`, note._id);
     }
   }
   let imported = 0;

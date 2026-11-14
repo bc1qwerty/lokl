@@ -77,7 +77,9 @@ const LONGPOLL_MS = 25_000;
 // uploadBytesPerSec is only a first guess at the uplink. A body that does not fit its deadline is not
 // retried as it was (that re-sent megabytes every few minutes and never finished): the push sends
 // smaller batches, and when a single note still does not fit, the guess itself is halved (uploadScale).
-const NET = { first: 60_000, idle: 60_000, slack: 30_000, uploadBytesPerSec: 10_000 };
+// cutAfter: a body upload the network cut only says "too big for this link" if it had been going a
+// while — offline, a request fails at once, and shrinking the batch then would only slow the catch-up.
+const NET = { first: 60_000, idle: 60_000, slack: 30_000, uploadBytesPerSec: 10_000, cutAfter: 10_000 };
 const net = { ...NET, longpoll: LONGPOLL_MS };
 const UPLOAD_SCALE_MAX = 64;
 // However slow the guess gets, a request that has not been answered after this long is dead.
@@ -86,12 +88,16 @@ let uploadScale = 1;
 // Set when the deadline of a request that carried a body ran out — the push reads it to tell
 // "too slow for this much" from every other failure (the error PouchDB hands back does not say).
 let uploadTimedOut = false;
+// Set when a request that carried a body was cut by the network (not by a deadline). One cut is an
+// outage like any other; the same batch cut again is likely too big for how long the link stays up.
+let uploadCut = false;
 
 /** Test hook: shorten the request deadlines. */
 export function __setNetTiming(n: Partial<typeof net> | null): void {
   Object.assign(net, NET, { longpoll: LONGPOLL_MS }, n ?? {});
   uploadScale = 1;
   uploadTimedOut = false;
+  uploadCut = false;
 }
 
 type FetchFn = (url: string | Request, opts?: RequestInit) => Promise<Response>;
@@ -108,6 +114,7 @@ export async function fetchWithDeadline(doFetch: FetchFn, url: string | Request,
   const first = longpoll ? net.longpoll + net.slack : net.first + Math.min(UPLOAD_MAX_MS, (bodyLen * uploadScale / net.uploadBytesPerSec) * 1000);
   const idle = longpoll ? net.longpoll + net.slack : net.idle;
   let timer = setTimeout(() => { if (bodyLen > 0) uploadTimedOut = true; ctl.abort(); }, first);
+  const started = Date.now();
   try {
     const res = await doFetch(url, { ...opts, signal: ctl.signal });
     const reader = res.body?.getReader();
@@ -125,6 +132,9 @@ export async function fetchWithDeadline(doFetch: FetchFn, url: string | Request,
     let at = 0;
     for (const c of chunks) { body.set(c, at); at += c.length; }
     return new Response(empty ? null : body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  } catch (err) {
+    if (bodyLen > 0 && !ctl.signal.aborted && Date.now() - started >= net.cutAfter) uploadCut = true;
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -178,6 +188,8 @@ interface Session {
   // Big notes that went through on their own — not probed again until edited.
   fits: Set<string>;
   force: boolean;
+  // Sending smaller batches after a timed-out or cut upload: work in progress, not a failure.
+  adapting: boolean;
 }
 
 // One function for every filtered push: PouchDB derives the replication id (and with it the
@@ -259,7 +271,7 @@ function recompute(s: Session): void {
   const err = s.pushErr ?? s.pullErr ?? (s.skip.size > 0 ? TOO_LARGE : null);
   if (err) onPaused(err);
   else if (s.pullPaused && !s.pushing && !s.force && s.pending.size === 0) onPaused();
-  else updateSyncState('syncing');
+  else updateSyncState('syncing', s.adapting ? t.value.msg.syncAdapting : undefined);
 }
 
 function backoff(fails: number): number {
@@ -287,6 +299,7 @@ async function runPush(s: Session): Promise<void> {
   if (!s.force && s.pending.size === 0 && !s.probe) { recompute(s); return; }
   s.pushing = true;
   uploadTimedOut = false;
+  uploadCut = false;
   const probing = s.probe;
   const catchUp = s.lastPushEnd === 0 && s.pending.size === 0;
   // A probe carries one note; everything else is still unsent.
@@ -305,6 +318,13 @@ async function runPush(s: Session): Promise<void> {
     s.pushing = false;
     s.pushErr = null;
     s.pushFails = 0;
+    s.adapting = false;
+    // A full batch got through: the link carries this much again. Without growing back, one slow
+    // stretch left batches of a few notes (and long deadlines) for the rest of the session.
+    if (!probing && (res?.docs_written ?? 0) >= s.batchSize) {
+      s.batchSize = Math.min(PUSH_BATCH, s.batchSize * 2);
+      uploadScale = Math.max(1, uploadScale / 2);
+    }
     if (probing) {
       // It fits on its own: the batch was the problem. Send the rest.
       s.probe = null;
@@ -325,7 +345,9 @@ async function runPush(s: Session): Promise<void> {
     const e = err as SyncError;
     const tooLarge = e?.status === 413 && e.code === 'REQUEST_TOO_LARGE';
     const timedOut = uploadTimedOut;
+    const cut = uploadCut;
     uploadTimedOut = false;
+    uploadCut = false;
     let next: { id: string; rev: string } | null = null;
     if (timedOut && (s.batchSize > 1 || uploadScale < UPLOAD_SCALE_MAX)) {
       // The upload did not fit its deadline: a slow uplink, or a dead one. Sending the same batch
@@ -336,8 +358,16 @@ async function runPush(s: Session): Promise<void> {
       // gains nothing from a smaller batch size).
       if (!probing) s.batchSize = Math.ceil(s.batchSize / 2);
       uploadScale = Math.min(UPLOAD_SCALE_MAX, uploadScale * 2);
-      s.pushErr = err;
+      s.pushErr = null;
+      s.adapting = true;
       schedulePush(s, timing.backoffBase);
+    } else if (cut && !probing && s.pushFails >= 1 && s.batchSize > 1) {
+      // Cut mid-upload a second time in a row: a link that drops every so often never carries a
+      // batch that takes longer than it stays up. Send less, so batches finish between drops.
+      s.batchSize = Math.ceil(s.batchSize / 2);
+      s.pushErr = null;
+      s.adapting = true;
+      schedulePush(s, backoff(s.pushFails++));
     } else if (tooLarge && probing) {
       // The note alone is over the request limit: name it once and leave it out, so the notes
       // behind it are not held back with it. Editing the note puts it back in.
@@ -358,6 +388,7 @@ async function runPush(s: Session): Promise<void> {
       schedulePush(s, 0);
     } else {
       s.pushErr = err;
+      s.adapting = false;
       noteFailure(s, err);
       schedulePush(s, backoff(s.pushFails++));
     }
@@ -418,7 +449,7 @@ export function startSync(): void {
     pullPaused: false, pullErr: null, pullFails: 0,
     pushing: false, pushErr: null, pushFails: 0, pushTimer: null, lastPushEnd: 0,
     batchSize: PUSH_BATCH, pending: new Set(), pulled: new Set(), skip: new Set(), skipLoaded: false,
-    probe: null, fits: new Set(), force: true,
+    probe: null, fits: new Set(), force: true, adapting: false,
   };
   session = s;
   updateSyncState('syncing');

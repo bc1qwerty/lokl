@@ -55,11 +55,11 @@ export function SubscriptionPanel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plan: planId }),
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || t.value.msg.paymentFailed);
-      }
-      const data = await res.json();
+      // The server's own wording (and a JSON parse error when a proxy answers in HTML) is not
+      // something to show in eight languages.
+      if (!res.ok) throw new Error(res.status === 401 ? t.value.msg.sessionExpired : t.value.msg.subscribeFailed);
+      const data = await res.json().catch(() => null);
+      if (!data?.paymentHash) throw new Error(t.value.msg.subscribeFailed);
       invoice.value = data;
 
       // Start polling for payment

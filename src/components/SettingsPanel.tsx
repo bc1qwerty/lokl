@@ -4,6 +4,7 @@ import { SubscriptionPanel } from './SubscriptionPanel';
 import { t, tf } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
+import { errorText } from '../lib/error-text';
 import { listTrash, purgeTrashed } from '../lib/db';
 import { wakeSync } from '../lib/sync';
 import { toast } from '../lib/toast';
@@ -42,7 +43,7 @@ export function SettingsPanel() {
       download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.${kind}`);
     } catch (err: any) {
       console.error('Export failed:', err);
-      toast.error(tf(m.exportFailed, { error: err?.message ?? m.unknownError }));
+      toast.error(tf(m.exportFailed, { error: errorText(err) }));
     }
   }
 
@@ -57,7 +58,7 @@ export function SettingsPanel() {
       });
       announceImport(report);
     } catch (err: any) {
-      if (err?.name !== 'AbortError') toast.error(tf(m.importFailed, { error: err?.message ?? m.unknownError }));
+      if (err?.name !== 'AbortError') toast.error(tf(m.importFailed, { error: errorText(err) }));
     } finally {
       folderImport.value = '';
     }
@@ -162,7 +163,7 @@ export function SettingsPanel() {
                            syncState.value.status === 'error' ? '#ef4444' : 'var(--text-muted)'
                   }}>
                     {syncState.value.status === 'synced' ? m.synced :
-                     syncState.value.status === 'syncing' ? m.syncing :
+                     syncState.value.status === 'syncing' ? (syncState.value.error || m.syncing) :
                      syncState.value.status === 'error' ? (syncState.value.error || m.syncError) :
                      m.notSyncing}
                   </span>
@@ -196,7 +197,7 @@ export function SettingsPanel() {
                   const { imported, conflicts } = await importJSON(f);
                   toast.success(tf(m.importedJson, { imported, conflicts }));
                 } catch (err: any) {
-                  toast.error(tf(m.importFailed, { error: err?.message ?? m.unknownError }));
+                  toast.error(tf(m.importFailed, { error: errorText(err) }));
                 }
                 (e.target as HTMLInputElement).value = '';
               }} />

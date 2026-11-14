@@ -4,6 +4,8 @@ import { setDB, putNote, listNotes, getNote, getDB } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 import { exportJSON, exportZIP, importJSON } from '../../src/lib/backup';
 import JSZip from 'jszip';
+import { errorText } from '../../src/lib/error-text';
+import { currentLang } from '../../src/i18n';
 
 beforeEach(() => setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>));
 
@@ -137,5 +139,22 @@ describe('importing the same backup again adds nothing', () => {
     const second = await importJSON(blob);
     expect(second).toEqual({ imported: 0, conflicts: 0 });
     expect(await count()).toBe(after);
+  });
+});
+
+describe('backup errors reach the user in their language', () => {
+  it('a broken or foreign file and a damaged note are named, not shown as English internals', async () => {
+    currentLang.value = 'ko';
+    try {
+      const notJson = await importJSON(new Blob(['<html>'])).catch(e => e);
+      expect(errorText(notJson)).toBe('lokl 백업 파일이 아닙니다');
+      const foreign = await importJSON(new Blob([JSON.stringify({ hello: 1 })])).catch(e => e);
+      expect(errorText(foreign)).toBe('lokl 백업 파일이 아닙니다');
+      const damaged = await importJSON(new Blob([JSON.stringify({ version: 1, exportedAt: '', notes: [{ _id: 'a.md', content: 5 }] })])).catch(e => e);
+      expect(errorText(damaged)).toContain('a.md');
+      expect(errorText(damaged)).toContain('손상된');
+    } finally {
+      currentLang.value = 'en';
+    }
   });
 });

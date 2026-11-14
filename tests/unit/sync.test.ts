@@ -448,6 +448,118 @@ describe('request deadlines', () => {
     await until(() => syncState.value.status === 'synced');
   });
 
+  // 2026-11-14 (5th audit): a link that dropped every 40s never carried a 0.9MB batch — only a
+  // timed-out upload shrank the batch; a cut one went back on the ordinary backoff and was re-sent whole.
+  it('an upload cut by the network twice in a row is sent in smaller batches, and gets through', async () => {
+    __setSyncTiming({ debounce: 20, interval: 100, backoffBase: 10, skipBytes: 8 * 1024 * 1024 });
+    __setNetTiming({ cutAfter: 0 });
+    const remoteDB = freshDB('remote-flaky') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    const sizes: number[] = [];
+    const cutFetch = () => Promise.reject(new TypeError('Failed to fetch'));
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.some((d: any) => typeof d.content === 'string')) sizes.push(docs.length);
+      if (docs.length > 3) {
+        // what the real remote does when the connection drops mid-upload
+        await fetchWithDeadline(cutFetch, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x' }).catch(() => undefined);
+        throw { status: 0, name: 'unknown', message: 'Failed to fetch' };
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    for (let i = 0; i < 12; i++) await putNote(`c${i}.md`, `note ${i}`);
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 12, 8000);
+    // 100 → (cut once: ordinary retry) → 50 → 25 → 13 → 7 → 4 → 2: it ends instead of re-sending the dozen forever
+    expect(sizes.filter(n => n === 12).length).toBeLessThanOrEqual(6);
+    expect(Math.min(...sizes)).toBeLessThanOrEqual(3);
+  });
+
+  it('offline, an upload that fails at once does not shrink the batch (the catch-up would crawl)', async () => {
+    __setSyncTiming({ debounce: 20, interval: 100, backoffBase: 10, skipBytes: 8 * 1024 * 1024 });
+    const remoteDB = freshDB('remote-offline') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    const sizes: number[] = [];
+    let down = true;
+    const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.some((d: any) => typeof d.content === 'string')) sizes.push(docs.length);
+      if (down) {
+        await fetchWithDeadline(offline, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x' }).catch(() => undefined);
+        throw { status: 0, name: 'unknown', message: 'Failed to fetch' };
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    for (let i = 0; i < 12; i++) await putNote(`o${i}.md`, `note ${i}`);
+    startSync();
+    // five shrinks would take 100 → 7, below the dozen
+    await until(() => sizes.length >= 7, 6000);
+    down = false;
+    await until(async () => (await remoteDB.allDocs()).rows.length === 12, 8000);
+    expect(sizes.every(n => n === 12)).toBe(true);
+  });
+
+  it('while it shrinks batches the state says it is still uploading, not that sync failed', async () => {
+    __setSyncTiming({ debounce: 20, interval: 100, backoffBase: 200, skipBytes: 8 * 1024 * 1024 });
+    __setNetTiming({ first: 15, idle: 5000, slack: 10, longpoll: 30, uploadBytesPerSec: 1e9 });
+    const remoteDB = freshDB('remote-adapting') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.length > 3) {
+        await fetchWithDeadline(hang, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x' }).catch(() => undefined);
+        throw { status: 0, name: 'unknown', message: 'aborted' };
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    for (let i = 0; i < 8; i++) await putNote(`a${i}.md`, `note ${i}`);
+    startSync();
+    await until(() => syncState.value.status === 'syncing' && /smaller pieces/.test(syncState.value.error ?? ''), 4000);
+    expect(syncState.value.status).toBe('syncing');
+    await until(async () => (await remoteDB.allDocs()).rows.length === 8, 8000);
+    await until(() => syncState.value.status === 'synced');
+    expect(syncState.value.error).toBeUndefined();
+  });
+
+  // After a slow stretch the batch stayed at a few notes for the rest of the session: every later
+  // edit burst cost a dozen rounds instead of one.
+  it('once full batches get through again, the batch size grows back', async () => {
+    __setSyncTiming({ debounce: 20, interval: 60, backoffBase: 10, skipBytes: 8 * 1024 * 1024 });
+    __setNetTiming({ first: 15, idle: 5000, slack: 10, longpoll: 30, uploadBytesPerSec: 1e9 });
+    const remoteDB = freshDB('remote-regrow') as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    const sizes: number[] = [];
+    let slow = true;
+    (remoteDB as any).bulkDocs = async (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      if (docs.some((d: any) => typeof d.content === 'string')) sizes.push(docs.length);
+      if (slow && docs.length > 2) {
+        await fetchWithDeadline(hang, 'https://x.test/db/_bulk_docs', { method: 'POST', body: 'x' }).catch(() => undefined);
+        throw { status: 0, name: 'unknown', message: 'aborted' };
+      }
+      return (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    for (let i = 0; i < 40; i++) await putNote(`g${i}.md`, `note ${i}`);
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 40, 10000);
+    slow = false;
+    // Edit bursts after the link recovered: each run that gets a full batch through doubles it.
+    let last: number[] = [];
+    for (let burst = 0; burst < 6; burst++) {
+      const before = sizes.length;
+      for (let i = 0; i < 10; i++) await putNote(`h${burst}-${i}.md`, `note ${i}`);
+      await until(async () => (await remoteDB.allDocs()).rows.length === 50 + burst * 10, 8000);
+      last = sizes.slice(before);
+    }
+    // two at a time would still be five rounds per burst
+    expect(last).toEqual([10]);
+  });
+
   it('a skipped note is named once, however often the sync restarts', async () => {
     __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20, skipBytes: 500 });
     const tooBig = (docs: any[]) => docs.some(d => (d.content?.length ?? 0) > 500);
