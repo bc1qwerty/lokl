@@ -1,4 +1,5 @@
 import { syncState, authState } from '../lib/store';
+import { t, tf } from '../i18n';
 
 export function SyncStatus() {
   const auth = authState.value;
@@ -12,16 +13,17 @@ export function SyncStatus() {
     sync.status === 'error' ? '#ef4444' :
     'var(--text-muted)';
 
+  const m = t.value.msg;
   const label =
-    sync.status === 'synced' ? 'Synced' :
-    sync.status === 'syncing' ? 'Syncing...' :
-    sync.status === 'error' ? (sync.error || 'Error') :
-    'Offline';
+    sync.status === 'synced' ? m.synced :
+    sync.status === 'syncing' ? m.syncing :
+    sync.status === 'error' ? (sync.error || m.syncError) :
+    m.offline;
 
   return (
     <span
       class="sync-status"
-      title={sync.lastSynced ? `Last synced: ${sync.lastSynced.toLocaleTimeString()}` : label}
+      title={sync.lastSynced ? tf(m.lastSynced, { time: sync.lastSynced.toLocaleTimeString() }) : label}
       style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--text-muted); padding:0 8px"
     >
       <span style={`width:6px; height:6px; border-radius:50%; background:${color}; display:inline-block`} />

@@ -1,14 +1,14 @@
 import { settings, updateSettings, settingsOpen, authState, syncState } from '../lib/store';
 import { getUser, openLogin } from '../lib/auth';
 import { SubscriptionPanel } from './SubscriptionPanel';
-import { t } from '../i18n';
+import { t, tf } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
 import { listTrash, purgeTrashed } from '../lib/db';
 import { wakeSync } from '../lib/sync';
 import { toast } from '../lib/toast';
 import { settleOpenNote } from '../lib/autosave';
-import { isNativeSupported } from '../lib/fs';
+import { isNativeSupported } from '../lib/migrate';
 import { importFromFSAA, announceImport } from '../lib/migrate';
 import { useSignal } from '@preact/signals';
 import { useRef } from 'preact/hooks';
@@ -27,6 +27,7 @@ function download(blob: Blob, name: string) {
 
 export function SettingsPanel() {
   const str = t.value.settings;
+  const m = t.value.msg;
   const s = settings.value;
   const folderImport = useSignal('');   // progress text while a folder import runs
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -41,7 +42,7 @@ export function SettingsPanel() {
       download(blob, `lokl-backup-${new Date().toISOString().slice(0, 10)}.${kind}`);
     } catch (err: any) {
       console.error('Export failed:', err);
-      toast.error(`Export failed: ${err?.message ?? 'unknown error'}`);
+      toast.error(tf(m.exportFailed, { error: err?.message ?? m.unknownError }));
     }
   }
 
@@ -50,13 +51,13 @@ export function SettingsPanel() {
   async function importFolder() {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
-      folderImport.value = 'Importing…';
+      folderImport.value = m.importing;
       const report = await importFromFSAA(handle, (current, total) => {
-        folderImport.value = `Importing ${current} / ${total}…`;
+        folderImport.value = tf(m.importingProgress, { current, total });
       });
       announceImport(report);
     } catch (err: any) {
-      if (err?.name !== 'AbortError') toast.error(`Import failed: ${err?.message ?? 'unknown error'}`);
+      if (err?.name !== 'AbortError') toast.error(tf(m.importFailed, { error: err?.message ?? m.unknownError }));
     } finally {
       folderImport.value = '';
     }
@@ -131,25 +132,25 @@ export function SettingsPanel() {
           <div class="settings-divider" style="border-top:1px solid var(--border); margin:12px 0" />
 
           <div class="settings-row">
-            <span class="settings-label" id="set-account">Account</span>
+            <span class="settings-label" id="set-account">{m.account}</span>
             <div class="settings-control" role="group" aria-labelledby="set-account" style="flex-direction:column; align-items:flex-end; gap:4px">
               {authState.value.status === 'authenticated' ? (
                 <>
                   <span style="font-size:12px; color:var(--text-primary)">
                     {authState.value.pubkey?.slice(0, 8)}...{authState.value.pubkey?.slice(-4)}
                   </span>
-                  <span style="font-size:11px; color:var(--text-muted)">Logged in</span>
+                  <span style="font-size:11px; color:var(--text-muted)">{m.loggedIn}</span>
                 </>
               ) : (
                 <button class="btn-primary" style="font-size:12px; padding:4px 12px" onClick={() => { settingsOpen.value = false; openLogin(); }}>
-                  Login with Lightning
+                  {m.loginLightning}
                 </button>
               )}
             </div>
           </div>
 
           <div class="settings-row" style="flex-direction:column; align-items:stretch">
-            <span class="settings-label">Sync</span>
+            <span class="settings-label">{m.sync}</span>
             {authState.value.status === 'authenticated' ? (
               <>
                 <SubscriptionPanel />
@@ -160,10 +161,10 @@ export function SettingsPanel() {
                            syncState.value.status === 'syncing' ? '#f59e0b' :
                            syncState.value.status === 'error' ? '#ef4444' : 'var(--text-muted)'
                   }}>
-                    {syncState.value.status === 'synced' ? 'Synced' :
-                     syncState.value.status === 'syncing' ? 'Syncing...' :
-                     syncState.value.status === 'error' ? (syncState.value.error || 'Error') :
-                     'Not syncing'}
+                    {syncState.value.status === 'synced' ? m.synced :
+                     syncState.value.status === 'syncing' ? m.syncing :
+                     syncState.value.status === 'error' ? (syncState.value.error || m.syncError) :
+                     m.notSyncing}
                   </span>
                   {syncState.value.lastSynced && (
                     <span style="font-size:11px; color:var(--text-muted)">
@@ -173,7 +174,7 @@ export function SettingsPanel() {
                 </div>
               </>
             ) : (
-              <span style="font-size:12px; color:var(--text-muted)">Login to enable sync</span>
+              <span style="font-size:12px; color:var(--text-muted)">{m.loginToSync}</span>
             )}
           </div>
 
@@ -193,9 +194,9 @@ export function SettingsPanel() {
                 if (!f) return;
                 try {
                   const { imported, conflicts } = await importJSON(f);
-                  toast.success(`Imported ${imported}. Conflicts kept: ${conflicts}.`);
+                  toast.success(tf(m.importedJson, { imported, conflicts }));
                 } catch (err: any) {
-                  toast.error(`Import failed: ${err?.message ?? 'unknown error'}`);
+                  toast.error(tf(m.importFailed, { error: err?.message ?? m.unknownError }));
                 }
                 (e.target as HTMLInputElement).value = '';
               }} />
@@ -203,7 +204,7 @@ export function SettingsPanel() {
 
             {isNativeSupported() && (
               <button class="btn-secondary settings-import-folder" disabled={!!folderImport.value} onClick={importFolder}>
-                {folderImport.value || 'Import from folder'}
+                {folderImport.value || m.importFromFolder}
               </button>
             )}
 
@@ -223,7 +224,7 @@ export function SettingsPanel() {
                 }
               }
               if (purged) wakeSync();
-              if (failed) toast.error(`Could not delete ${failed} of ${trashed.length} notes.`);
+              if (failed) toast.error(tf(m.couldNotDelete, { failed, total: trashed.length }));
               toast.success(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
             }}>{str.data.emptyTrash}</button>
           </div>

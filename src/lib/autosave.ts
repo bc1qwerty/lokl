@@ -1,6 +1,7 @@
 import { effect, signal, batch } from '@preact/signals';
 import { currentFilePath, currentFileContent, savedContent, isDirty, openTabs, closeTab } from './store';
-import { putNote, isConnectionLost, reopenDB, isStorageFull, deviceStorageFull, STORAGE_FULL_MESSAGE } from './db';
+import { putNote, isConnectionLost, reopenDB, isStorageFull, deviceStorageFull } from './db';
+import { t, tf } from '../i18n';
 import type { NoteDoc } from './db';
 import { updateLinksForFile } from './markdown';
 import { indexFile } from './search';
@@ -168,9 +169,9 @@ async function doSave(path: string, content: string): Promise<boolean> {
     if (failStreak++ === 0) {
       if (isStorageFull(e) || (isConnectionLost(e) && await deviceStorageFull())) {
         // Emptying the trash does not help here: once the browser is out of space even deletes fail.
-        toast.error(STORAGE_FULL_MESSAGE);
+        toast.error(t.value.msg.storageFull);
       } else {
-        toast.error(`Save failed: ${e?.message ?? 'unknown error'} — retrying`);
+        toast.error(tf(t.value.msg.saveFailed, { error: e?.message ?? t.value.msg.unknownError }));
       }
     }
     // A dead connection never recovers on its own — every retry would fail the

@@ -1,4 +1,5 @@
 import MiniSearch from 'minisearch';
+import { nfc } from './note-path';
 
 const index = new MiniSearch<{ id: string; title: string; path: string; content: string }>({
   fields: ['title', 'content'],
@@ -14,8 +15,10 @@ const index = new MiniSearch<{ id: string; title: string; path: string; content:
 });
 
 export function indexFile(path: string, content: string) {
-  const title = path.split('/').pop()?.replace(/\.md$/, '') || path;
+  // Indexed text is NFC so a typed query finds a title or body that arrived decomposed (Mac file names).
+  const title = nfc(path.split('/').pop()?.replace(/\.md$/, '') || path);
   const id = path;
+  content = nfc(content);
   if (index.has(id)) {
     index.replace({ id, title, path, content });
   } else {
@@ -31,12 +34,7 @@ export function removeFromIndex(path: string) {
 
 export function search(query: string, limit = 20) {
   if (!query.trim()) return [];
-  return index.search(query).slice(0, limit);
-}
-
-export function suggest(query: string, limit = 5) {
-  if (!query.trim()) return [];
-  return index.autoSuggest(query).slice(0, limit);
+  return index.search(nfc(query)).slice(0, limit);
 }
 
 export function clearIndex() {

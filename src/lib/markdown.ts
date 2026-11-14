@@ -2,7 +2,7 @@ import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { allFilePaths, backlinksIndex, wikilinksIndex, tagsIndex } from './store';
 import type { Frontmatter } from '../types';
-import { safeNoteId } from './note-path';
+import { safeNoteId, nfc } from './note-path';
 
 // --- Wiki-link regex ---
 const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
@@ -36,7 +36,7 @@ export function parseFrontmatter(content: string): { frontmatter: Frontmatter; b
 // (`paths.find`) for every link; re-resolving a 3,000-note vault that way was
 // millions of string comparisons on the main thread.
 interface Resolver {
-  exact: Set<string>;
+  exact: Map<string, string>; // NFC path -> stored id
   byName: Map<string, string>;    // "note"        -> first path whose file name is note.md
   bySuffix: Map<string, string>;  // "dir/note.md" -> first path ending in /dir/note.md
   // Case-insensitive fallbacks. `null` = more than one note matches, so the link stays
@@ -50,18 +50,22 @@ function addUnique(m: Map<string, string | null>, key: string, path: string): vo
 }
 
 function buildResolver(paths: string[]): Resolver {
-  const exact = new Set(paths);
+  // Keys are NFC (what a keyboard types); values are the ids as stored — an id imported from a
+  // Mac folder before ids were normalised is NFD and still has to be found.
+  const exact = new Map<string, string>();
   const byName = new Map<string, string>();
   const bySuffix = new Map<string, string>();
   const lowerExact = new Map<string, string | null>();
   const lowerName = new Map<string, string | null>();
   for (const p of paths) {
-    const name = (p.split('/').pop() ?? '').replace(/\.md$/, '');
+    const k = nfc(p);
+    if (!exact.has(k) || p === k) exact.set(k, p);
+    const name = (k.split('/').pop() ?? '').replace(/\.md$/, '');
     if (!byName.has(name)) byName.set(name, p);
-    addUnique(lowerExact, p.toLowerCase(), p);
+    addUnique(lowerExact, k.toLowerCase(), p);
     addUnique(lowerName, name.toLowerCase(), p);
-    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) {
-      const suffix = p.slice(i + 1);
+    for (let i = k.indexOf('/'); i !== -1; i = k.indexOf('/', i + 1)) {
+      const suffix = k.slice(i + 1);
       if (!bySuffix.has(suffix)) bySuffix.set(suffix, p);
     }
   }
@@ -80,8 +84,7 @@ function resolverFor(paths: string[]): Resolver {
 
 function lookup(r: Resolver, target: string): string | null {
   const withExt = target.endsWith('.md') ? target : `${target}.md`;
-  if (r.exact.has(withExt)) return withExt;
-  return r.byName.get(target) ?? r.bySuffix.get(withExt) ?? null;
+  return r.exact.get(withExt) ?? r.byName.get(target) ?? r.bySuffix.get(withExt) ?? null;
 }
 
 function lookupAnyCase(r: Resolver, target: string): string | null {
@@ -102,7 +105,7 @@ function resolveTarget(r: Resolver, target: string): string | null {
 }
 
 function resolveWith(r: Resolver, linkText: string): string | null {
-  const target = linkText.split('|')[0].trim();
+  const target = nfc(linkText.split('|')[0].trim());
   const hit = resolveTarget(r, target);
   if (hit) return hit;
   // [[Note#Heading]] opens the note (a note literally named "a#b" was tried above and wins).
@@ -322,6 +325,14 @@ marked.use({
       },
     },
   ],
+});
+
+// A link in a note opened in this tab, replacing the app (and the editor state with it).
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.nodeName !== 'A' || node.hasAttribute('data-wikilink')) return;
+  if (!/^(https?:)?\/\//i.test(node.getAttribute('href') ?? '')) return;
+  node.setAttribute('target', '_blank');
+  node.setAttribute('rel', 'noopener noreferrer');
 });
 
 export function renderMarkdown(content: string): string {

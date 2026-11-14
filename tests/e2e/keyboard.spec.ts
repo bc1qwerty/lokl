@@ -164,3 +164,57 @@ test('on a phone the note has the full width and the side panels are drawers', a
   await expect(layout).toHaveAttribute('data-backlinks', 'open');
   await expect(layout).toHaveAttribute('data-sidebar', 'closed');
 });
+
+// A note imported from a Mac folder has its Korean name decomposed (NFD). Typed text is composed
+// (NFC): the link to it stayed broken, quick open did not find it, and "New File" with the same
+// name made a second note that looked identical.
+test('a note whose name is stored decomposed is found by what the keyboard types', async ({ page }, testInfo) => {
+  await freshStart(page);
+  const nfd = '한글노트.md'.normalize('NFD');
+  const file = testInfo.outputPath('nfd.json');
+  const fs = await import('fs');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, notes: [{ _id: nfd, content: 'decomposed body' }] }));
+  await page.getByTitle('Settings').click();
+  await page.locator('input[type="file"][accept=".json"]').setInputFiles(file);
+  await expect(page.locator('.toast-success')).toBeVisible({ timeout: 8_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.file-tree .tree-item')).toHaveCount(1);
+
+  // quick open by typing the composed name
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type('한글노트');
+  await expect(page.locator('.search-result-item')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+
+  // "New File" with the same name opens the existing note instead of creating a twin
+  await page.locator('.sidebar-action-btn').click();
+  await page.keyboard.type('한글노트');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.new-file-dialog')).toHaveCount(0);
+  await expect(page.locator('.cm-content')).toContainText('decomposed body');
+  await expect(page.locator('.file-tree .tree-item')).toHaveCount(1);
+
+  // a typed [[link]] to it resolves, and the backlink entry opens the linking note from the keyboard
+  await createByTyping(page, 'linker');
+  await page.locator('.cm-content').click();
+  await page.keyboard.type('see [[한글노트]]');
+  await expect(page.locator('.save-status.saved')).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('.markdown-preview a.wikilink')).not.toHaveClass(/wikilink-broken/);
+  await page.locator('.markdown-preview a.wikilink').click();
+  await expect(page.locator('.cm-content')).toContainText('decomposed body');
+  const back = page.locator('.backlinks-panel .backlink-item');
+  await expect(back).toHaveCount(1);
+  await back.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.tab-item.active')).toContainText('linker');
+});
+
+test('a link to another site in the preview opens in a new tab, not over the app', async ({ page }) => {
+  await freshStart(page);
+  await createByTyping(page, 'links');
+  await page.locator('.cm-content').click();
+  await page.keyboard.type('[site](https://example.com/x)');
+  const a = page.locator('.markdown-preview a[href="https://example.com/x"]');
+  await expect(a).toHaveAttribute('target', '_blank');
+  await expect(a).toHaveAttribute('rel', 'noopener noreferrer');
+});

@@ -5,7 +5,7 @@ import { wakeSync } from '../lib/sync';
 import type { TrashAction } from '../lib/db';
 import { toast } from '../lib/toast';
 import type { NoteDoc } from '../lib/db';
-import { t } from '../i18n';
+import { t, tf } from '../i18n';
 
 export function TrashPanel() {
   const items = useSignal<NoteDoc[]>([]);
@@ -37,10 +37,10 @@ export function TrashPanel() {
       const result = await op(id);
       // A sync stopped on the storage limit is waiting out a backoff — space was just freed.
       if (op === purgeTrashed && result === 'done') wakeSync();
-      if (result === 'not-trashed') toast.info(`"${id}" was already restored — left untouched.`);
-      else if (result === 'gone') toast.info(`"${id}" is no longer in the trash.`);
+      if (result === 'not-trashed') toast.info(tf(t.value.msg.alreadyRestored, { name: id }));
+      else if (result === 'gone') toast.info(tf(t.value.msg.noLongerInTrash, { name: id }));
     } catch (e: any) {
-      toast.error(`Trash action failed: ${e?.message ?? 'unknown error'}`);
+      toast.error(tf(t.value.msg.trashActionFailed, { error: e?.message ?? t.value.msg.unknownError }));
     } finally {
       await refresh().catch(() => {});
     }

@@ -2,6 +2,7 @@ import PouchDB from 'pouchdb-browser';
 import { getDB, listConflicts, resolveConflict, type NoteDoc } from './db';
 import { syncState, type SyncStatus } from './store';
 import { toast } from './toast';
+import { t, tf } from '../i18n';
 
 let conflictResolverRunning = false;
 let conflictResolverPending = false;
@@ -39,7 +40,7 @@ export async function resolveAllConflicts(): Promise<void> {
       const left = await listConflicts().catch(() => []);
       if (left.length > 0 && !unresolvedWarned) {
         unresolvedWarned = true;
-        toast.warning(`${left.length} sync conflict${left.length === 1 ? '' : 's'} could not be resolved yet — the other version is kept and will be retried.`);
+        toast.warning(left.length === 1 ? t.value.msg.conflictUnresolvedOne : tf(t.value.msg.conflictUnresolvedMany, { n: left.length }));
       }
     } else {
       unresolvedWarned = false;
@@ -67,6 +68,72 @@ export function __setSyncTiming(t: Partial<typeof timing> | null): void {
   Object.assign(timing, TIMING, t ?? {});
 }
 
+// A connection that stops answering (captive portal, dead NAT entry, a proxy that went away) left
+// the push at "Syncing…" and the pull at "Synced" for as long as the OS kept the socket open.
+// Every request gets a deadline: to the first byte, and between chunks after that — a slow link
+// that keeps delivering is never cut. The long poll is asked to answer within LONGPOLL_MS (no
+// heartbeat: a deadline must not depend on single bytes passing a compressing proxy).
+const LONGPOLL_MS = 25_000;
+const NET = { first: 60_000, idle: 60_000, slack: 30_000, uploadBytesPerSec: 20_000 };
+const net = { ...NET, longpoll: LONGPOLL_MS };
+
+/** Test hook: shorten the request deadlines. */
+export function __setNetTiming(n: Partial<typeof net> | null): void {
+  Object.assign(net, NET, { longpoll: LONGPOLL_MS }, n ?? {});
+}
+
+type FetchFn = (url: string | Request, opts?: RequestInit) => Promise<Response>;
+
+export async function fetchWithDeadline(doFetch: FetchFn, url: string | Request, opts: RequestInit = {}): Promise<Response> {
+  const ctl = new AbortController();
+  const outer = opts.signal;
+  if (outer?.aborted) ctl.abort();
+  else outer?.addEventListener('abort', () => ctl.abort(), { once: true });
+  const longpoll = /[?&]feed=longpoll/.test(typeof url === 'string' ? url : url.url);
+  const bodyLen = typeof opts.body === 'string' ? opts.body.length : 0;
+  const first = longpoll ? net.longpoll + net.slack : net.first + (bodyLen / net.uploadBytesPerSec) * 1000;
+  const idle = longpoll ? net.longpoll + net.slack : net.idle;
+  let timer = setTimeout(() => ctl.abort(), first);
+  try {
+    const res = await doFetch(url, { ...opts, signal: ctl.signal });
+    const reader = res.body?.getReader();
+    if (!reader) return res;
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      clearTimeout(timer);
+      timer = setTimeout(() => ctl.abort(), idle);
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const empty = res.status === 204 || res.status === 205 || res.status === 304;
+    const body = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+    let at = 0;
+    for (const c of chunks) { body.set(c, at); at += c.length; }
+    return new Response(empty ? null : body, { status: res.status, statusText: res.statusText, headers: res.headers });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Notes left out of the upload (see skip below), remembered as id → revision so the next session
+// does not upload them again just to be refused again.
+const SKIPPED_NAME = 'lokl-sync-skipped';
+
+function readSkipped(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(SKIPPED_NAME) || '{}') || {}; } catch { return {}; }
+}
+function writeSkipped(map: Record<string, string>): void {
+  try {
+    if (Object.keys(map).length === 0) localStorage.removeItem(SKIPPED_NAME);
+    else localStorage.setItem(SKIPPED_NAME, JSON.stringify(map));
+  } catch { /* not remembered: the next session finds out again */ }
+}
+function forgetSkipped(id: string): void {
+  const map = readSkipped();
+  if (id in map) { delete map[id]; writeSkipped(map); }
+}
+
 interface Session {
   cancelled: boolean;
   local: PouchDB.Database<NoteDoc>;
@@ -91,11 +158,24 @@ interface Session {
   pulled: Set<string>;
   // Notes that alone exceed the request limit. Left out so the rest still uploads.
   skip: Set<string>;
+  skipLoaded: boolean;
+  // A big note being sent on its own, to learn whether it or the batch was over the limit.
+  probe: { id: string; rev: string } | null;
+  // Big notes that went through on their own — not probed again until edited.
+  fits: Set<string>;
   force: boolean;
+}
+
+// One function for every filtered push: PouchDB derives the replication id (and with it the
+// checkpoint) from the filter's source text, so the set of skipped notes can change without
+// starting a new replication each time.
+function notSkipped(doc: { _id: string }): boolean {
+  return !session?.skip.has(doc._id);
 }
 
 let session: Session | null = null;
 let quotaWarned = false;
+let pullRestarts = 0;
 const TOO_LARGE = { status: 413 };
 let subscriptionLost: (() => void) | null = null;
 let subLostAt = 0;
@@ -125,12 +205,13 @@ type SyncError = { status?: number; code?: string } | null | undefined;
 export function describeSyncError(err: unknown): string {
   const e = err as SyncError;
   // Deleting a note only moves it to the trash — the server still holds the whole text.
-  if (e?.status === 413 && e.code === 'STORAGE_LIMIT') return 'Sync storage full (50MB) — delete notes and empty the trash to resume';
-  if (e?.status === 413) return 'A note is too large to sync';
-  if (e?.status === 401) return 'Session expired';
-  if (e?.status === 403 && e.code === 'NO_SUBSCRIPTION') return 'Sync subscription ended';
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'Offline — will retry';
-  return 'Sync failed — will retry';
+  const m = t.value.msg;
+  if (e?.status === 413 && e.code === 'STORAGE_LIMIT') return m.syncStorageFull;
+  if (e?.status === 413) return m.noteTooLarge;
+  if (e?.status === 401) return m.sessionExpired;
+  if (e?.status === 403 && e.code === 'NO_SUBSCRIPTION') return m.subscriptionEnded;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return m.offlineRetry;
+  return m.syncFailedRetry;
 }
 
 // A network failure or 5xx must not read as synced — that would stamp lastSynced while nothing
@@ -140,7 +221,8 @@ export function onPaused(err?: unknown): void {
     const msg = describeSyncError(err);
     // The status dot is easy to miss; a full sync quota means edits stop leaving this device,
     // so say it once — not once per retry (the state passes through 'syncing' in between).
-    if (msg.startsWith('Sync storage full') && !quotaWarned) { quotaWarned = true; toast.error(msg); }
+    const e = err as SyncError;
+    if (e?.status === 413 && e.code === 'STORAGE_LIMIT' && !quotaWarned) { quotaWarned = true; toast.error(msg); }
     updateSyncState('error', msg);
   } else {
     quotaWarned = false;
@@ -179,18 +261,19 @@ function schedulePush(s: Session, delay: number): void {
 
 async function runPush(s: Session): Promise<void> {
   if (s.cancelled || s.pushing) return;
-  if (!s.force && s.pending.size === 0) { recompute(s); return; }
+  if (!s.force && s.pending.size === 0 && !s.probe) { recompute(s); return; }
   s.pushing = true;
+  const probing = s.probe;
   const catchUp = s.lastPushEnd === 0 && s.pending.size === 0;
-  s.force = false;
-  s.pending = new Set();
+  // A probe carries one note; everything else is still unsent.
+  if (!probing) { s.force = false; s.pending = new Set(); }
   recompute(s);
   try {
+    if (!s.skipLoaded) { s.skipLoaded = true; await loadSkipped(s); }
+    if (s.cancelled) return;
     const opts: PouchDB.Replication.ReplicateOptions = { batch_size: s.batchSize };
-    if (s.skip.size > 0) {
-      const all = await s.local.changes({ since: 0 });
-      opts.doc_ids = all.results.map(r => r.id).filter(id => !s.skip.has(id));
-    }
+    if (probing) Object.assign(opts, { doc_ids: [probing.id], batch_size: 1, checkpoint: false });
+    else if (s.skip.size > 0) opts.filter = notSkipped;
     const rep = s.local.replicate.to(s.remote, opts);
     s.pushRep = rep;
     const res = await rep;
@@ -198,22 +281,43 @@ async function runPush(s: Session): Promise<void> {
     s.pushing = false;
     s.pushErr = null;
     s.pushFails = 0;
-    // The catch-up at start usually sends nothing; pacing from it would hold the first edit back
-    // for a whole interval. Every later round paces, sent or not (a second tab's rounds are
-    // mostly empty — the first tab got there first — and must not run on the short debounce).
-    if (!catchUp || (res?.docs_written ?? 0) > 0) s.lastPushEnd = Date.now();
-    if (s.pending.size > 0) schedulePush(s, Math.max(timing.debounce, s.lastPushEnd + timing.interval - Date.now()));
+    if (probing) {
+      // It fits on its own: the batch was the problem. Send the rest.
+      s.probe = null;
+      s.fits.add(probing.id);
+      s.force = true;
+      schedulePush(s, 0);
+    } else {
+      // The catch-up at start usually sends nothing; pacing from it would hold the first edit back
+      // for a whole interval. Every later round paces, sent or not (a second tab's rounds are
+      // mostly empty — the first tab got there first — and must not run on the short debounce).
+      if (!catchUp || (res?.docs_written ?? 0) > 0) s.lastPushEnd = Date.now();
+      if (s.pending.size > 0) schedulePush(s, Math.max(timing.debounce, s.lastPushEnd + timing.interval - Date.now()));
+    }
   } catch (err) {
     if (s.cancelled) return;
     s.pushing = false;
     s.force = true; // whatever this run carried is still unsent
     const e = err as SyncError;
-    if (e?.status === 413 && e.code === 'REQUEST_TOO_LARGE' && s.batchSize > 1) {
+    const tooLarge = e?.status === 413 && e.code === 'REQUEST_TOO_LARGE';
+    let next: { id: string; rev: string } | null = null;
+    if (tooLarge && probing) {
+      // The note alone is over the request limit: name it once and leave it out, so the notes
+      // behind it are not held back with it. Editing the note puts it back in.
+      s.probe = null;
+      s.skip.add(probing.id);
+      writeSkipped({ ...readSkipped(), [probing.id]: probing.rev });
+      toast.error(tf(t.value.msg.noteTooLargeNamed, { name: probing.id }));
+      schedulePush(s, 0);
+    } else if (tooLarge && (next = await largestUntried(s))) {
+      // Try the biggest note on its own before shrinking the batch: halving down to one note at a
+      // time sent an oversized note eight times before it was told apart from an oversized batch.
+      s.probe = next;
+      schedulePush(s, 0);
+    } else if (tooLarge && s.batchSize > 1) {
       // The batch, not a note, was over the request limit. Smaller batches get through, and the
       // ones that do move the checkpoint.
       s.batchSize = Math.ceil(s.batchSize / 2);
-      schedulePush(s, 0);
-    } else if (e?.status === 413 && e.code === 'REQUEST_TOO_LARGE' && await skipLargest(s)) {
       schedulePush(s, 0);
     } else {
       s.pushErr = err;
@@ -224,25 +328,40 @@ async function runPush(s: Session): Promise<void> {
   recompute(s);
 }
 
-/** One note alone is over the request limit: name it once and leave it out, so the notes
- *  behind it are not held back with it. Editing the note puts it back in. */
-async function skipLargest(s: Session): Promise<boolean> {
+/** The biggest note that could by itself be over the request limit and has not been tried alone. */
+async function largestUntried(s: Session): Promise<{ id: string; rev: string } | null> {
   try {
     const all = await s.local.allDocs({ include_docs: true });
-    let worst: { id: string; size: number } | null = null;
+    let worst: { id: string; rev: string; size: number } | null = null;
     for (const r of all.rows) {
       const content = (r.doc as NoteDoc | undefined)?.content ?? '';
       // length is a lower bound on bytes; only encode the candidates.
-      if (s.skip.has(r.id) || content.length * 3 < timing.skipBytes) continue;
+      if (s.skip.has(r.id) || s.fits.has(r.id) || content.length * 3 < timing.skipBytes) continue;
       const size = new TextEncoder().encode(content).length;
-      if (size > (worst?.size ?? 0)) worst = { id: r.id, size };
+      if (size > (worst?.size ?? 0)) worst = { id: r.id, rev: r.value.rev, size };
     }
-    // No note that big: the cause is something else — keep the ordinary error and backoff.
-    if (s.cancelled || !worst || worst.size < timing.skipBytes) return false;
-    s.skip.add(worst.id);
-    toast.error(`"${worst.id}" is too large to sync — it stays on this device. Shorten or split it to sync it again.`);
-    return true;
-  } catch { return false; }
+    // No note that big: the cause is something else — shrink the batch or keep the ordinary error.
+    if (s.cancelled || !worst || worst.size < timing.skipBytes) return null;
+    return { id: worst.id, rev: worst.rev };
+  } catch { return null; }
+}
+
+/** Notes an earlier session found too large, if they are still at that revision. */
+async function loadSkipped(s: Session): Promise<void> {
+  const map = readSkipped();
+  const ids = Object.keys(map);
+  if (ids.length === 0) return;
+  const still: Record<string, string> = {};
+  try {
+    const res = await s.local.allDocs({ keys: ids });
+    for (const r of res.rows as Array<{ id?: string; value?: { rev: string; deleted?: boolean } }>) {
+      if (!r.id || !r.value || r.value.deleted || r.value.rev !== map[r.id]) continue;
+      still[r.id] = map[r.id];
+      s.skip.add(r.id);
+      toast.error(tf(t.value.msg.noteTooLargeNamed, { name: r.id }));
+    }
+  } catch { return; }
+  writeSkipped(still);
 }
 
 export function startSync(): void {
@@ -253,8 +372,7 @@ export function startSync(): void {
     ? remoteFactoryOverride()
     : new PouchDB<NoteDoc>(`${API_URL}/lokl/db`, {
         fetch(url, opts) {
-          (opts as any).credentials = 'include';
-          return PouchDB.fetch(url, opts);
+          return fetchWithDeadline(PouchDB.fetch as FetchFn, url, { ...opts, credentials: 'include' });
         },
       });
 
@@ -262,7 +380,8 @@ export function startSync(): void {
     cancelled: false, local, remote,
     pullPaused: false, pullErr: null, pullFails: 0,
     pushing: false, pushErr: null, pushFails: 0, pushTimer: null, lastPushEnd: 0,
-    batchSize: PUSH_BATCH, pending: new Set(), pulled: new Set(), skip: new Set(), force: true,
+    batchSize: PUSH_BATCH, pending: new Set(), pulled: new Set(), skip: new Set(), skipLoaded: false,
+    probe: null, fits: new Set(), force: true,
   };
   session = s;
   updateSyncState('syncing');
@@ -270,6 +389,9 @@ export function startSync(): void {
   s.pull = local.replicate.from(remote, {
     live: true,
     retry: true,
+    // The server answers an idle long poll after this long, so a request that outlives it is dead.
+    heartbeat: false,
+    timeout: net.longpoll,
     // PouchDB hands in its own delay, which it resets on every 'active'. Count ourselves.
     back_off_function: () => backoff(s.pullFails++),
   })
@@ -286,7 +408,7 @@ export function startSync(): void {
     .on('paused', (err: unknown) => {
       s.pullPaused = true;
       s.pullErr = err ?? null;
-      if (err) noteFailure(s, err); else s.pullFails = 0;
+      if (err) noteFailure(s, err); else { s.pullFails = 0; pullRestarts = 0; }
       recompute(s);
     })
     .on('active', () => { s.pullPaused = false; s.pullErr = null; recompute(s); })
@@ -295,14 +417,21 @@ export function startSync(): void {
       console.error('Sync error:', err);
       s.pullPaused = true;
       s.pullErr = err ?? new Error('sync stopped');
+      if (err) noteFailure(s, err);
       recompute(s);
+      // retry:true covers what PouchDB considers transient. Anything else ends the pull for good,
+      // and nothing else would start it again — the state said "error" until a reload.
+      setTimeout(() => { if (s === session) startSync(); }, backoff(pullRestarts++));
     });
 
   s.feed = local.changes({ since: 'now', live: true })
     .on('change', (c) => {
       const key = `${c.id}@${c.changes[0]?.rev}`;
       if (s.pulled.delete(key)) return; // the pull wrote this one
-      s.skip.delete(c.id); // edited: it may fit now
+      // edited: it may fit now
+      if (s.skip.delete(c.id)) forgetSkipped(c.id);
+      s.fits.delete(c.id);
+      if (s.probe?.id === c.id) s.probe = null;
       s.pending.add(key);
       // Already waiting (pacing or backoff) or running: this change rides along. Re-arming here
       // would let steady typing postpone the push forever.

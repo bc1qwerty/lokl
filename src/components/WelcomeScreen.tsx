@@ -1,7 +1,6 @@
 import { useSignal } from '@preact/signals';
-import { t } from '../i18n';
-import { isNativeSupported } from '../lib/fs';
-import { importFromFSAA, describeImport, announceImport, markMigrated } from '../lib/migrate';
+import { t, tf } from '../i18n';
+import { importFromFSAA, describeImport, announceImport, isNativeSupported } from '../lib/migrate';
 import { toast } from '../lib/toast';
 
 interface Props {
@@ -13,38 +12,38 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
   const dragover = useSignal(false);
   const progress = useSignal('');
   const str = t.value.welcome;
+  const m = t.value.msg;
 
   // Shared by the picker and the drop path. The outcome is always shown: a partial
   // import used to look complete, and a failed one left the screen without a word.
   async function runImport(handle: FileSystemDirectoryHandle) {
-    progress.value = 'Importing files...';
+    progress.value = m.importing;
     const report = await importFromFSAA(handle, (current, total) => {
-      progress.value = `Importing ${current} / ${total}...`;
+      progress.value = tf(m.importingProgress, { current, total });
     });
     const summary = describeImport(report);
     if (report.imported + report.unchanged + report.conflicts.length === 0) {
       // Nothing came in — stay here instead of opening an empty vault as if it worked.
-      toast.error(report.skipped.length ? summary : 'No markdown files found in that folder.');
+      toast.error(report.skipped.length ? summary : m.noMarkdown);
       progress.value = '';
       return;
     }
     announceImport(report);
-    markMigrated();
-    progress.value = `Imported ${report.imported} files. Loading...`;
+    progress.value = tf(m.importedLoading, { n: report.imported });
     await onLoadComplete();
   }
 
   async function handleImportFolder() {
     if (!isNativeSupported()) return;
     loading.value = true;
-    progress.value = 'Selecting folder...';
+    progress.value = m.selectingFolder;
     try {
       const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
       await runImport(handle);
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
         console.error('Import failed:', e);
-        toast.error(`Import failed: ${(e as Error)?.message ?? 'unknown error'}`);
+        toast.error(tf(m.importFailed, { error: (e as Error)?.message ?? m.unknownError }));
       }
       progress.value = '';
     } finally {
@@ -73,7 +72,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
           await runImport(handle as FileSystemDirectoryHandle);
         } catch (err) {
           console.error('Drop import failed:', err);
-          toast.error(`Import failed: ${(err as Error)?.message ?? 'unknown error'}`);
+          toast.error(tf(m.importFailed, { error: (err as Error)?.message ?? m.unknownError }));
           progress.value = '';
         } finally {
           loading.value = false;
@@ -85,8 +84,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
   async function handleStartFresh() {
     loading.value = true;
     try {
-      markMigrated();
-      await onLoadComplete();
+        await onLoadComplete();
     } finally {
       loading.value = false;
     }
@@ -110,7 +108,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
-            Start fresh
+            {m.startFresh}
           </button>
 
           {isNativeSupported() && (
@@ -118,7 +116,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               </svg>
-              Import from folder
+              {m.importFromFolder}
             </button>
           )}
 

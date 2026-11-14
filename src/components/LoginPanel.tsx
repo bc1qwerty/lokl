@@ -3,6 +3,7 @@ import { useEffect } from 'preact/hooks';
 import { authState } from '../lib/store';
 import { loadSDK, openLogin, getUser, onAuthChange, type TxidUser } from '../lib/auth';
 // sync is gated by subscription, not auto-started on login
+import { t } from '../i18n';
 
 export function LoginPanel() {
   const ready = useSignal(false);
@@ -49,7 +50,7 @@ export function LoginPanel() {
         class="btn-primary"
         style="font-size:11px; padding:3px 8px; width:100%"
         onClick={openLogin}
-      >Login with Lightning</button>
+      >{t.value.msg.loginLightning}</button>
     </div>
   );
 }

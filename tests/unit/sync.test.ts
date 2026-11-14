@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
 import { setDB, getDB, putNote, listConflicts } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
-import { startSync, stopSync, isSyncing, onPaused, wakeSync, onSubscriptionLost, describeSyncError, __setRemoteFactory, __setSyncTiming } from '../../src/lib/sync';
+import { startSync, stopSync, isSyncing, onPaused, wakeSync, onSubscriptionLost, describeSyncError, fetchWithDeadline, __setNetTiming, __setRemoteFactory, __setSyncTiming } from '../../src/lib/sync';
 import { toasts } from '../../src/lib/toast';
 import { syncState } from '../../src/lib/store';
 
@@ -16,6 +16,8 @@ beforeEach(() => {
 
 afterEach(() => {
   stopSync();
+  localStorage.removeItem('lokl-sync-skipped');
+  __setNetTiming(null);
   __setRemoteFactory(null);
   onSubscriptionLost(null);
   __setSyncTiming(null);
@@ -332,5 +334,87 @@ describe('push pacing, backoff and refused writes', () => {
     expect(syncState.value.error).toBe('Sync subscription ended');
     expect(lost).toBeLessThanOrEqual(1);
     expect(describeSyncError({ status: 403 })).toBe('Sync failed — will retry');
+  });
+  it('an oversized note is uploaded twice at most, not once per halving', async () => {
+    __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20, skipBytes: 500 });
+    let giantUploads = 0;
+    const { remoteDB } = countingRemote('remote-probe', (docs) => {
+      const big = (docs as any[]).some(d => (d.content?.length ?? 0) > 500);
+      if (big) giantUploads++;
+      return big ? { status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' } : null;
+    });
+    for (let i = 0; i < 40; i++) await putNote(`n${i}.md`, `small ${i}`);
+    await putNote('giant.md', 'x'.repeat(2000));
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 40);
+    await until(() => syncState.value.status === 'error');
+    expect(giantUploads).toBe(2); // once in the batch, once alone — it was 8 with the batch halved down to 1
+    // the next session knows already: the note is not sent again
+    stopSync();
+    startSync();
+    await until(() => syncState.value.error === 'A note is too large to sync');
+    await putNote('n0.md', 'small again');
+    await until(async () => (await remoteDB.get('n0.md') as any).content === 'small again');
+    expect(giantUploads).toBe(2);
+    // edited: forgotten, tried again
+    await putNote('giant.md', 'short now');
+    await until(async () => (await remoteDB.get('giant.md').catch(() => null) as any)?.content === 'short now');
+    expect(localStorage.getItem('lokl-sync-skipped')).toBeNull();
+  });
+
+  it('a big note that fits on its own is not left out when the batch was the problem', async () => {
+    __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20, skipBytes: 500 });
+    const { remoteDB } = countingRemote('remote-fits', (docs) =>
+      ((docs as any[]).reduce((n, d) => n + (d.content?.length ?? 0), 0) > 1500 ? { status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' } : null));
+    await putNote('big1.md', 'a'.repeat(1000));
+    await putNote('big2.md', 'b'.repeat(1000));
+    await putNote('s.md', 'small');
+    startSync();
+    await until(async () => (await remoteDB.allDocs()).rows.length === 3);
+    await until(() => syncState.value.status === 'synced');
+    expect(toasts.value).toHaveLength(0);
+  });
+});
+
+describe('request deadlines', () => {
+  const hang = (_u: unknown, o?: RequestInit) => new Promise<Response>((_, rej) => {
+    o?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+  });
+
+  it('a request that never answers is aborted', async () => {
+    __setNetTiming({ first: 40, idle: 40, slack: 10, longpoll: 30 });
+    const t0 = Date.now();
+    await expect(fetchWithDeadline(hang, 'https://x.test/db/_bulk_docs', { method: 'POST', body: '{}' })).rejects.toThrow();
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
+  it('a long poll gets its poll time plus slack', async () => {
+    __setNetTiming({ first: 5000, idle: 5000, slack: 20, longpoll: 60 });
+    const t0 = Date.now();
+    await expect(fetchWithDeadline(hang, 'https://x.test/db/_changes?feed=longpoll&timeout=60')).rejects.toThrow();
+    const took = Date.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(70);
+    expect(took).toBeLessThan(1500);
+  });
+
+  it('a body that stops arriving is aborted; one that keeps arriving is not, however long it takes', async () => {
+    __setNetTiming({ first: 200, idle: 60, slack: 10, longpoll: 30 });
+    const streamed = (chunks: number, gap: number, stall = false) => (_u: unknown, o?: RequestInit) => Promise.resolve(new Response(new ReadableStream({
+      async start(c) {
+        o?.signal?.addEventListener('abort', () => c.error(new DOMException('aborted', 'AbortError')));
+        for (let i = 0; i < chunks; i++) { await new Promise(r => setTimeout(r, gap)); c.enqueue(new TextEncoder().encode('ab')); }
+        if (!stall) c.close();
+      },
+    }), { status: 200 }));
+    const ok = await fetchWithDeadline(streamed(10, 30), 'https://x.test/db/_bulk_get', { method: 'POST', body: '{}' });
+    expect(await ok.text()).toBe('ab'.repeat(10)); // 300ms in all — past both deadlines, never idle for 60ms
+    await expect(fetchWithDeadline(streamed(2, 10, true), 'https://x.test/db/_bulk_get', { method: 'POST', body: '{}' })).rejects.toThrow();
+  });
+
+  it("the caller's own abort still works", async () => {
+    const ctl = new AbortController();
+    const p = fetchWithDeadline(hang, 'https://x.test/db/', { signal: ctl.signal });
+    ctl.abort();
+    await expect(p).rejects.toThrow();
   });
 });

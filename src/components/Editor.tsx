@@ -8,6 +8,7 @@ import { languages } from '@codemirror/language-data';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { currentFileContent, savedContent, currentFilePath, settings } from '../lib/store';
 import { theme } from '../lib/theme';
+import { t } from '../i18n';
 
 const lightTheme = EditorView.theme({}, { dark: false });
 const themeCompartment = new Compartment();
@@ -59,6 +60,8 @@ function getExtensions(): Extension[] {
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     EditorView.lineWrapping,
+    // Tab indents here, so a keyboard user needs to be told the way out (Esc, then Tab).
+    EditorView.contentAttributes.of({ 'aria-description': t.peek().msg.tabHint }),
     wikilinkDeco,
     themeCompartment.of(theme.value === 'dark' ? oneDark : lightTheme),
     readOnlyCompartment.of(EditorState.readOnly.of(false)),

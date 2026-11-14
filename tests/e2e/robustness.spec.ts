@@ -57,31 +57,37 @@ test('New File turns awkward names into clean ids and never loses the note', asy
   expect(await noteIds(page)).toHaveLength(4);
 });
 
-test('when the editor bundle cannot be fetched the app stays alive and says so', async ({ page }) => {
-  await freshStart(page);
-  let blocked = true;
-  await page.route(/\/assets\/Editor-[^/]+\.js/, (route) => (blocked ? route.abort() : route.continue()));
-  await newFile(page, 'first');
-
-  const failed = page.locator('.editor-load-failed');
-  await expect(failed).toBeVisible({ timeout: 10_000 });
-  await expect(failed).toContainText('could not be loaded');
-  // the rest of the app still answers — it used to be a blank, dead screen
-  await page.locator('.sidebar-action-btn').click();
-  await expect(page.getByRole('heading', { name: 'New File' })).toBeVisible();
-  await page.keyboard.press('Escape');
-
-  // connection back: Retry (or, where the browser will not re-fetch a failed module, Reload) brings the editor
-  blocked = false;
-  await failed.getByRole('button', { name: 'Retry' }).click();
-  const editor = page.locator('.cm-content');
-  if (!(await editor.waitFor({ state: 'visible', timeout: 6_000 }).then(() => true, () => false))) {
-    await expect(failed).toBeVisible();
-    await failed.getByRole('button', { name: 'Reload' }).click();
-    await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
-    await page.locator('.tree-item-name', { hasText: 'first' }).click();
-  }
-  await expect(editor).toBeVisible({ timeout: 10_000 });
+// Without a service worker: once it controls the page (clientsClaim) the editor chunk comes from the
+// precache and never fails — which is the point of it. This is the case where there is none yet
+// (first visit, cache evicted) and the network drops.
+test.describe('no service worker', () => {
+  test.use({ serviceWorkers: 'block' });
+  test('when the editor bundle cannot be fetched the app stays alive and says so', async ({ page }) => {
+    await freshStart(page);
+    let blocked = true;
+    await page.route(/\/assets\/Editor-[^/]+\.js/, (route) => (blocked ? route.abort() : route.continue()));
+    await newFile(page, 'first');
+  
+    const failed = page.locator('.editor-load-failed');
+    await expect(failed).toBeVisible({ timeout: 10_000 });
+    await expect(failed).toContainText('could not be loaded');
+    // the rest of the app still answers — it used to be a blank, dead screen
+    await page.locator('.sidebar-action-btn').click();
+    await expect(page.getByRole('heading', { name: 'New File' })).toBeVisible();
+    await page.keyboard.press('Escape');
+  
+    // connection back: Retry (or, where the browser will not re-fetch a failed module, Reload) brings the editor
+    blocked = false;
+    await failed.getByRole('button', { name: 'Retry' }).click();
+    const editor = page.locator('.cm-content');
+    if (!(await editor.waitFor({ state: 'visible', timeout: 6_000 }).then(() => true, () => false))) {
+      await expect(failed).toBeVisible();
+      await failed.getByRole('button', { name: 'Reload' }).click();
+      await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10_000 });
+      await page.locator('.tree-item-name', { hasText: 'first' }).click();
+    }
+    await expect(editor).toBeVisible({ timeout: 10_000 });
+  });
 });
 
 test('a note that arrives through another tab is searchable without a reload', async ({ context, page }) => {

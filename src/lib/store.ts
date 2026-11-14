@@ -26,7 +26,6 @@ export function isCompact(): boolean {
 }
 // On a narrow window both panels open would cover the note entirely, and a split view is two slivers.
 export const sidebarOpen = signal(!isNarrow());
-export const previewOpen = signal(true);
 export const backlinksOpen = signal(!isCompact());
 export const viewMode = signal<ViewMode>(isNarrow() ? 'edit' : 'split');
 // On a narrow window the two drawers share the same space: opening one closes the other, or the

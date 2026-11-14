@@ -72,7 +72,6 @@ export async function deviceStorageFull(): Promise<boolean> {
   } catch { return false; }
 }
 
-export const STORAGE_FULL_MESSAGE = 'This device is out of storage space — notes cannot be saved. Copy what you are writing somewhere safe, free up space on the device, then reload.';
 
 export function isConnectionLost(e: unknown): boolean {
   const err = e as { name?: string; message?: string } | null;
@@ -474,6 +473,9 @@ export async function atomicRename(oldPath: string, newPath: string): Promise<vo
   // Reserve check: destination must not exist as a visible note.
   const destExisting = await getNote(newPath);
   if (destExisting) throw new Error('Destination exists');
+  // Losing revisions that sync has not turned into conflict copies yet would be removed with the
+  // old id below (purgeNote takes every leaf). Make them copies first; they are re-pointed at the end.
+  try { await resolveConflict(oldPath); } catch (e: any) { if (e?.status !== 404) console.error('Resolving conflicts before rename failed:', e); }
   const source = await getNote(oldPath);
   if (!source) throw new Error('Source not found');
 

@@ -4,7 +4,8 @@ import { setDB } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
 import { stopSync, isSyncing, __setRemoteFactory } from '../../src/lib/sync';
 import { authState, syncState } from '../../src/lib/store';
-import { initSyncController, notifySubscriptionChanged, __setRecheckBase } from '../../src/lib/sync-controller';
+import { toasts } from '../../src/lib/toast';
+import { initSyncController, notifySubscriptionChanged, __setRecheckBase, __setSubCheckTimeout } from '../../src/lib/sync-controller';
 
 function mockSubscription(active: boolean) {
   vi.stubGlobal('fetch', vi.fn(async () =>
@@ -185,5 +186,50 @@ describe('sync-controller', () => {
     await tick();
     expect(isSyncing()).toBe(true);
     expect(localStorage.getItem('lokl-sync-owner')).toBe('cd'.repeat(33));
+  });
+  it('응답이 영영 없는 구독 확인은 시한에서 끊기고 다시 묻는다', async () => {
+    __setRecheckBase(30);
+    __setSubCheckTimeout(40);
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn((_u: unknown, o?: RequestInit) => {
+      if (++calls > 1) return Promise.resolve(new Response(JSON.stringify({ active: true }), { status: 200 }));
+      return new Promise<Response>((_, rej) => o?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError'))));
+    }));
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await new Promise(r => setTimeout(r, 300));
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(isSyncing()).toBe(true);
+    __setRecheckBase(null);
+    __setSubCheckTimeout(null);
+  });
+
+  it('꺼져 있을 때 화면으로 돌아오면 다시 확인한다(다른 기기에서 결제·갱신)', async () => {
+    mockSubscription(false);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(false);
+    mockSubscription(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await tick();
+    expect(isSyncing()).toBe(true);
+  });
+
+  it('돌던 동기화가 구독 만료로 꺼지면 한 번 알린다', async () => {
+    toasts.value = [];
+    mockSubscription(true);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(true);
+    mockSubscription(false);
+    notifySubscriptionChanged();
+    await tick();
+    expect(isSyncing()).toBe(false);
+    expect(toasts.value.filter(t => /subscription ended/i.test(t.message))).toHaveLength(1);
+    notifySubscriptionChanged();
+    await tick();
+    expect(toasts.value.filter(t => /subscription ended/i.test(t.message))).toHaveLength(1);
   });
 });

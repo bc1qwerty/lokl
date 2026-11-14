@@ -3,6 +3,7 @@ import { useSignal } from '@preact/signals';
 import { allFilePaths, quickOpenOpen } from '../lib/store';
 import { t } from '../i18n';
 import { useDialog, useSelectedInView } from '../lib/dialog';
+import { nfc } from '../lib/note-path';
 
 interface Props {
   onSelect: (path: string) => void;
@@ -20,10 +21,10 @@ export function QuickOpen({ onSelect }: Props) {
   useSelectedInView(listRef, selectedIdx.value);
 
   const filtered = (() => {
-    const q = query.value.toLowerCase();
+    const q = nfc(query.value).toLowerCase();
     if (!q) return allFilePaths.value.slice(0, 30);
     return allFilePaths.value
-      .filter((p) => p.toLowerCase().includes(q))
+      .filter((p) => nfc(p).toLowerCase().includes(q))
       .slice(0, 30);
   })();
 

@@ -35,6 +35,10 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Take over the page that installed it: without this the first visit ran unserved, and
+        // going offline before a lazy chunk (the editor) was fetched failed. Updates still wait
+        // for the prompt — there is no skipWaiting.
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // og-image.png is for social crawlers only — keep it out of the SW precache
         globIgnores: ['og-image.png'],

@@ -3,7 +3,7 @@ import { freshDB } from '../helpers/memory-db';
 import { createMockDir, wrapAsFSAA } from '../helpers/mock-fsaa';
 import { setDB, getDB, listNotes, listConflictSiblings, listTrash, putNote, getNote, deleteNote } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
-import { importFromFSAA, exportToFSAA, describeImport, interruptedImport, importRunning } from '../../src/lib/migrate';
+import { importFromFSAA, describeImport, interruptedImport, importRunning } from '../../src/lib/migrate';
 
 beforeEach(() => {
   setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>);
@@ -262,52 +262,3 @@ describe('migrate.importFromFSAA that does not finish', () => {
   });
 });
 
-describe('migrate.exportToFSAA', () => {
-  it('exports flat notes', async () => {
-    await putNote('x.md', '# X');
-    const dir = createMockDir();
-    const n = await exportToFSAA(wrapAsFSAA(dir));
-    expect(n).toBe(1);
-    expect((dir.children.get('x.md') as any)?.content).toBe('# X');
-  });
-
-  it('creates subdirectories as needed', async () => {
-    await putNote('journal/y.md', 'day note');
-    const dir = createMockDir();
-    await exportToFSAA(wrapAsFSAA(dir));
-    const journal = dir.children.get('journal') as any;
-    expect(journal?.kind).toBe('directory');
-    expect((journal?.children.get('y.md') as any)?.content).toBe('day note');
-  });
-
-  it('leaves no .lokl-tmp residue on success', async () => {
-    await putNote('a.md', 'A');
-    await putNote('b.md', 'B');
-    const dir = createMockDir();
-    await exportToFSAA(wrapAsFSAA(dir));
-    for (const name of dir.children.keys()) {
-      expect(name.endsWith('.lokl-tmp')).toBe(false);
-    }
-  });
-
-  it('does not corrupt destination when temp write fails', async () => {
-    await putNote('p.md', 'partial-content');
-    const dir = createMockDir();
-    // Seed the destination so we can detect corruption
-    dir.children.set('p.md', { kind: 'file', name: 'p.md', content: 'ORIGINAL' } as any);
-    // Pre-seed the temp file with failClose so atomicWrite fails before promoting to final
-    dir.children.set('p.md.lokl-tmp', { kind: 'file', name: 'p.md.lokl-tmp', content: '', failClose: true } as any);
-
-    let threw = false;
-    try {
-      await exportToFSAA(wrapAsFSAA(dir));
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(true);
-    // Original destination still has its original content
-    expect((dir.children.get('p.md') as any).content).toBe('ORIGINAL');
-    // No .lokl-tmp left behind
-    expect(dir.children.get('p.md.lokl-tmp')).toBeUndefined();
-  });
-});

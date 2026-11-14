@@ -29,6 +29,15 @@ describe('normalizeNotePath', () => {
   });
 });
 
+describe('unicode form', () => {
+  it('a decomposed (Mac file name) spelling becomes the composed one', () => {
+    const nfd = '한글노트'.normalize('NFD');
+    expect(nfd).not.toBe('한글노트');
+    expect(normalizeNotePath(nfd)).toBe('한글노트.md');
+    expect(normalizeNotePath(`dir/${'café'.normalize('NFD')}`)).toBe('dir/café.md');
+  });
+});
+
 describe('safeNoteId', () => {
   it('touches only a leading underscore run', () => {
     expect(safeNoteId('_templates/daily.md')).toBe('-templates/daily.md');

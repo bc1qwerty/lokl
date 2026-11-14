@@ -23,7 +23,10 @@ export function BacklinksPanel({ onNavigate }: Props) {
             <div
               key={sourcePath}
               class="backlink-item"
+              role="link"
+              tabIndex={0}
               onClick={() => onNavigate(sourcePath)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(sourcePath); } }}
             >
               <div class="backlink-item-title">{name}</div>
               <div class="backlink-item-context">{sourcePath}</div>

@@ -9,13 +9,23 @@ export function safeNoteId(path: string): string {
 }
 
 /**
+ * One spelling for comparisons. A file name from a Mac folder arrives decomposed (NFD: "한" as three
+ * jamo), what the keyboard types is composed (NFC) — the two look the same and never compared equal,
+ * so [[links]], quick open and a second "same" note all missed. New ids are stored NFC; ids already
+ * stored NFD are left as they are and matched through this.
+ */
+export function nfc(text: string): string {
+  return text.normalize('NFC');
+}
+
+/**
  * Turn what a person typed into a note id: trimmed segments, no empty / "." / ".."
  * segments, ".md" appended, leading "_" swapped per safeNoteId.
  * Returns null when nothing usable is left.
  */
 export function normalizeNotePath(input: string): string | null {
   const parts: string[] = [];
-  for (const raw of input.replace(/\\/g, '/').split('/')) {
+  for (const raw of nfc(input).replace(/\\/g, '/').split('/')) {
     const seg = raw.trim();
     if (!seg || seg === '.') continue;
     if (seg === '..') { parts.pop(); continue; }

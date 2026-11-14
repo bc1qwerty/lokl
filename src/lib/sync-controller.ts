@@ -7,6 +7,8 @@ import { effect } from '@preact/signals';
 import { authState, syncState } from './store';
 import { startSync, stopSync, isSyncing, wakeSync, onSubscriptionLost } from './sync';
 import { dbEpoch } from './db';
+import { toast } from './toast';
+import { t } from '../i18n';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
@@ -25,9 +27,7 @@ function ownerAllows(pubkey: string | undefined): boolean {
   try { owner = localStorage.getItem(SYNC_OWNER_NAME); } catch { return true; }
   if (owner && owner !== pubkey) {
     if (declinedFor === pubkey) return false;
-    const ok = typeof confirm === 'function' && confirm(
-      'The notes in this browser were synced with a different account. Sync them into this account too? Both accounts\' notes will be merged. Cancel keeps sync off; your notes stay in this browser.',
-    );
+    const ok = typeof confirm === 'function' && confirm(t.value.msg.otherAccountConfirm);
     if (!ok) { declinedFor = pubkey; return false; }
   }
   declinedFor = null;
@@ -37,15 +37,31 @@ function ownerAllows(pubkey: string | undefined): boolean {
 
 // true/false = 서버가 답했다. null = 모른다(네트워크 순단·5xx·429) — 이걸 «구독 없음» 으로 읽으면
 // api 재시작 중의 502 한 번에 잘 돌던 동기화가 세션 내내 조용히 꺼진다.
+// 응답이 영영 없으면(연결이 매달림) 재확인 타이머가 걸리지 않아 «Offline» 으로 굳는다 — 시한을 둔다.
+const SUB_CHECK_TIMEOUT_MS = 15_000;
+let subCheckTimeout = SUB_CHECK_TIMEOUT_MS;
+let lastSubStatus = 0;
+let lastVisibleCheck = 0;
+
+/** Test hook: shorten the subscription-check deadline. */
+export function __setSubCheckTimeout(ms: number | null): void {
+  subCheckTimeout = ms ?? SUB_CHECK_TIMEOUT_MS;
+}
+
 async function hasActiveSubscription(): Promise<boolean | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), subCheckTimeout);
   try {
-    const res = await fetch(`${API_URL}/lokl/subscription`, { credentials: 'include' });
+    const res = await fetch(`${API_URL}/lokl/subscription`, { credentials: 'include', signal: ctl.signal });
+    lastSubStatus = res.status;
     if (res.status === 401 || res.status === 403) return false;
     if (!res.ok) return null;
     const data = await res.json();
     return data?.active === true;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -84,11 +100,13 @@ async function evaluate(): Promise<void> {
   recheckFails = 0;
   if (active && !ownerAllows(authState.value.pubkey)) {
     stopSync();
-    syncState.value = { status: 'error', error: 'Sync is off: these notes belong to another account' };
+    syncState.value = { status: 'error', error: t.value.msg.otherAccountOff };
   } else if (active) {
     // 이미 돌고 있는 동기화를 재확인 때문에 다시 시작하지 않는다(다시 시작하면 전체 대조를 한 번 더 한다).
     if (!isSyncing() || syncedEpoch !== dbEpoch.value) { syncedEpoch = dbEpoch.value; startSync(); }
   } else {
+    // 돌던 동기화가 구독 만료로 꺼진다 — 상태 점 하나로는 놓친다. 한 번 알린다.
+    if (isSyncing() && lastSubStatus === 200) toast.warning(t.value.msg.subscriptionEnded);
     stopSync();
   }
 }
@@ -117,7 +135,16 @@ export function initSyncController(): () => void {
   // 돌던 동기화가 backoff(최대 5분) 중이면 바로 깨운다.
   const onOnline = () => { wakeSync(); void evaluate(); };
   window.addEventListener('online', onOnline);
+  // 다른 기기에서 결제·갱신한 뒤 이 탭으로 돌아왔을 때. 돌고 있으면 묻지 않는다(만료는 서버의 403 이 알린다).
+  const onVisible = () => {
+    if (document.visibilityState !== 'visible' || authState.value.status !== 'authenticated' || isSyncing() || recheckTimer) return;
+    if (Date.now() - lastVisibleCheck < 60_000) return;
+    lastVisibleCheck = Date.now();
+    void evaluate();
+  };
+  document.addEventListener('visibilitychange', onVisible);
   return () => {
+    document.removeEventListener('visibilitychange', onVisible);
     dispose();
     clearRecheck();
     checkSeq++;

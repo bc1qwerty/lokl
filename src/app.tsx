@@ -8,11 +8,13 @@ import {
   isLoading, addTab, closeTab, settings, currentFileContent,
 } from './lib/store';
 import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, applyChange, expectLocalRemoval } from './lib/autosave';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch, compactOnce, isStorageFull, deviceStorageFull, STORAGE_FULL_MESSAGE } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch, compactOnce, isStorageFull, deviceStorageFull } from './lib/db';
 import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
-import { normalizeNotePath } from './lib/note-path';
+import { normalizeNotePath, nfc } from './lib/note-path';
+import { allFilePaths } from './lib/store';
+import { tf } from './i18n';
 import { interruptedImport, clearInterruptedImport, rememberInterruptedToast } from './lib/migrate';
 
 import { startQuotaMonitor } from './lib/quota';
@@ -112,6 +114,7 @@ export function App() {
   const renameTarget = useSignal('');
   const renameValue = useSignal('');
   const dbError = useSignal<string | null>(null);
+  const dbFull = useSignal(false);
 
   // Initialize PouchDB on mount
   useEffect(() => {
@@ -121,9 +124,8 @@ export function App() {
     void interruptedImport().then((cut) => {
       if (!cut) return;
       const reminder = toast.warning(
-        `A folder import was interrupted after about ${cut.done} of ${cut.total} files. `
-        + 'Open Settings → "Import from folder" and pick the same folder to finish — notes already imported are skipped.',
-        { ttl: 120_000, action: { label: "Don't remind me", handler: clearInterruptedImport } },
+        tf(t.value.msg.importInterrupted, { done: cut.done, total: cut.total }),
+        { ttl: 120_000, action: { label: t.value.msg.dontRemind, handler: clearInterruptedImport } },
       );
       rememberInterruptedToast(reminder);
     });
@@ -147,8 +149,8 @@ export function App() {
       console.error('Storage unavailable:', e);
       dbError.value = e?.message ?? 'IndexedDB error';
       isLoading.value = false;
-      if (isStorageFull(e)) dbError.value = STORAGE_FULL_MESSAGE;
-      else void deviceStorageFull().then((full) => { if (full) dbError.value = STORAGE_FULL_MESSAGE; });
+      if (isStorageFull(e)) dbFull.value = true;
+      else void deviceStorageFull().then((full) => { if (full) dbFull.value = true; });
     });
     return () => { stop(); stopSyncController(); };
   }, []);
@@ -235,14 +237,20 @@ export function App() {
   const handleFileClick = useCallback(async (path: string) => {
     try {
       if (path === currentFilePath.value) { await settleOpenNote(); return; }
-      const note = await getNote(path);
-      if (!note) return;
-      // Unsaved edits belong to the note being left. If they can't be saved,
-      // stay on it rather than drop them. Nothing is awaited between the settle
-      // resolving clean and showNote below, so no keystroke can fall in between
-      // (the note was fetched first for that reason).
+      // Unsaved edits belong to the note being left. If they can't be saved, stay on it rather
+      // than drop them. The target is read AFTER the settle — read before it, a sync landing
+      // during the settle left the editor on a stale text and revision. Nothing is awaited between
+      // the last check and showNote, so no keystroke can fall in between; one typed during the
+      // read sends us round again.
       // (With no note open there is nothing to lose — never let leftover text block opening one.)
-      if (currentFilePath.value && (!(await settleOpenNote()) || isDirty.value)) return;
+      let note: Awaited<ReturnType<typeof getNote>> = null;
+      for (let round = 0; ; round++) {
+        if (currentFilePath.value && !(await settleOpenNote())) return;
+        note = await getNote(path);
+        if (!note) return;
+        if (!currentFilePath.value || !isDirty.value) break;
+        if (round >= 3) return;
+      }
       showNote(path, note.content, note._rev);
       addTab(path);
       saveStatus.value = 'clean';
@@ -285,18 +293,21 @@ export function App() {
     const name = newFileName.value.trim();
     if (!name) return;
     // "/lead", "trail/", "x/../y" used to become ids as typed; "_x" was refused by the database.
-    const path = normalizeNotePath(name);
-    if (!path) { toast.error(`"${name}" is not a usable note name.`); return; }
+    const typedPath = normalizeNotePath(name);
+    if (!typedPath) { toast.error(tf(t.value.msg.notUsableName, { name })); return; }
+    // A note imported from a Mac folder may carry the same name in another Unicode form (NFD);
+    // it is the same note to the eye — open it instead of creating a twin.
+    const path = allFilePaths.value.find((p) => p !== typedPath && nfc(p) === typedPath) ?? typedPath;
     const swapped = /^_/.test(name.replace(/^[\s/]+/, ''));
     try {
       // An existing note with this name is opened, never blanked.
       if (await getNote(path)) {
         newFileOpen.value = false;
-        if (swapped) toast.info(`Names can't start with "_" — opened the existing "${path}".`);
+        if (swapped) toast.info(tf(t.value.msg.underscoreOpened, { path }));
         await handleFileClick(path);
         return;
       }
-      if (swapped) toast.info(`Names can't start with "_" — created as "${path}".`);
+      if (swapped) toast.info(tf(t.value.msg.underscoreCreated, { path }));
       await putNote(path, '');
       const notes = await listNotes();
       fileTree.value = buildFileTree(notes);
@@ -304,7 +315,7 @@ export function App() {
       await handleFileClick(path);
     } catch (e: any) {
       console.error('Failed to create file:', e);
-      toast.error(`Create failed: ${e?.message ?? 'unknown error'}`);
+      toast.error(tf(t.value.msg.createFailed, { error: e?.message ?? t.value.msg.unknownError }));
     }
   }, [handleFileClick]);
 
@@ -341,9 +352,9 @@ export function App() {
     if (!typed) return;
     const dir = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/') + 1) : '';
     const newPath = normalizeNotePath(dir + typed);
-    if (!newPath) { toast.error(`"${typed}" is not a usable note name.`); return; }
+    if (!newPath) { toast.error(tf(t.value.msg.notUsableName, { name: typed })); return; }
     if (newPath === oldPath) { renameOpen.value = false; return; }
-    if (!dir && typed.startsWith('_')) toast.info(`Names can't start with "_" — renamed to "${newPath}".`);
+    if (!dir && typed.startsWith('_')) toast.info(tf(t.value.msg.underscoreRenamed, { path: newPath }));
     // The old id's tombstone reaches the change feed while we are still here;
     // it must not close the editor under us.
     const done = expectLocalRemoval(oldPath);
@@ -370,14 +381,14 @@ export function App() {
       refocusTree(newPath);
     } catch (e: any) {
       console.error('Rename failed:', e);
-      toast.error(`Rename failed: ${e?.message ?? 'unknown error'}`);
+      toast.error(tf(t.value.msg.renameFailed, { error: e?.message ?? t.value.msg.unknownError }));
     } finally {
       done();
     }
   }, [handleFileClick]);
 
   const handleDelete = useCallback(async (path: string) => {
-    if (!confirm(`Delete "${path.split('/').pop()}"?`)) return;
+    if (!confirm(tf(t.value.msg.deleteConfirm, { name: path.split('/').pop() ?? path }))) return;
     try {
       if (currentFilePath.value === path) {
         // Land the latest text first so the trash copy is complete, then empty
@@ -395,7 +406,7 @@ export function App() {
       refocusTree();
     } catch (e: any) {
       console.error('Delete failed:', e);
-      toast.error(`Delete failed: ${e?.message ?? 'unknown error'}`);
+      toast.error(tf(t.value.msg.deleteFailed, { error: e?.message ?? t.value.msg.unknownError }));
     }
   }, [handleTabClose]);
 
@@ -491,13 +502,13 @@ export function App() {
   // Storage failed to open — showing WelcomeScreen here would look like data
   // loss and invite a re-import onto a broken DB.
   if (dbError.value) {
+    const m = t.value.msg;
     return (
       <main class="welcome">
         <div class="welcome-logo">Lokl</div>
-        <p class="welcome-tagline">Storage unavailable: {dbError.value}</p>
+        <p class="welcome-tagline">{tf(m.storageUnavailable, { error: dbFull.value ? m.storageFull : dbError.value })}</p>
         <p class="welcome-tagline">
-          Your notes were not deleted — the browser could not open local storage.
-          {dbError.value === STORAGE_FULL_MESSAGE ? '' : ' Reload to retry; private browsing can block IndexedDB.'}
+          {m.notesNotDeleted}{dbFull.value ? '' : ` ${m.reloadRetry}`}
         </p>
       </main>
     );

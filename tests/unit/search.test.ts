@@ -52,4 +52,10 @@ describe('search index', () => {
       process.off('unhandledRejection', onErr);
     }
   });
+  it('a typed query finds a title and a body stored decomposed (NFD)', () => {
+    const nfd = '한글노트.md'.normalize('NFD');
+    indexFile(nfd, '본문에는 café 가 있다'.normalize('NFD'));
+    expect(search('한글노트').map(h => h.id)).toContain(nfd);
+    expect(search('café').map(h => h.id)).toContain(nfd);
+  });
 });

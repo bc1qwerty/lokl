@@ -286,6 +286,20 @@ describe('trash + sweeper', () => {
 });
 
 describe('atomicRename', () => {
+  it('a losing revision sync has not resolved yet survives the rename as a conflict copy', async () => {
+    await putNote('r.md', 'winner text');
+    const win = await getDB().get('r.md');
+    await getDB().bulkDocs([{ ...win, _rev: '1-ffffffffffffffffffffffffffffffff', content: 'edit made on another device' } as any], { new_edits: false });
+    expect((await listConflicts()).map(c => c._id)).toContain('r.md');
+    await atomicRename('r.md', 'renamed.md');
+    const copies = await listConflictSiblings();
+    // whichever revision won is the renamed note; the other one must still exist, as a copy of it
+    const texts = [(await getNote('renamed.md'))?.content, ...copies.map(c => c.content)].sort();
+    expect(texts).toEqual(['edit made on another device', 'winner text']);
+    expect(copies.every(c => c.conflictOf === 'renamed.md')).toBe(true);
+    expect(await getNote('r.md')).toBeNull();
+  });
+
   it('moves a note from old to new path', async () => {
     await putNote('old.md', 'content here');
     await atomicRename('old.md', 'new.md');

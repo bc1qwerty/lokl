@@ -54,7 +54,10 @@ export function TagsPanel({ onFileClick }: Props) {
               <div
                 key={path}
                 class="backlink-item"
+                role="link"
+                tabIndex={0}
                 onClick={() => onFileClick(path)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onFileClick(path); } }}
               >
                 <div class="backlink-item-title">{name}</div>
               </div>

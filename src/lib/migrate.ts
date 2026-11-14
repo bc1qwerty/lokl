@@ -1,52 +1,11 @@
 import { putNote, listNotes, getDB } from './db';
 import type { NoteDoc } from './db';
-import { safeNoteId, contentHash } from './note-path';
+import { safeNoteId, contentHash, nfc } from './note-path';
 import { toast, dismiss } from './toast';
+import { t, tf } from '../i18n';
 
-const TMP_SUFFIX = '.lokl-tmp';
-
-async function atomicWrite(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-  content: string,
-): Promise<void> {
-  const tmpName = `${name}${TMP_SUFFIX}`;
-  // Create + write temp file
-  const tmpHandle = await dir.getFileHandle(tmpName, { create: true });
-  const w = await tmpHandle.createWritable();
-  try {
-    await w.write(content);
-    await w.close();
-  } catch (e) {
-    // Best-effort cleanup of the half-written temp file
-    try { await dir.removeEntry(tmpName); } catch { /* ignore */ }
-    throw e;
-  }
-  // Promote temp to final
-  if (typeof (tmpHandle as any).move === 'function') {
-    await (tmpHandle as any).move(name);
-    return;
-  }
-  // Fallback: re-read tmp, write to final, then remove tmp
-  const data = await (await tmpHandle.getFile()).text();
-  const finalHandle = await dir.getFileHandle(name, { create: true });
-  const fw = await finalHandle.createWritable();
-  try {
-    await fw.write(data);
-    await fw.close();
-  } catch (e) {
-    try { await dir.removeEntry(tmpName); } catch { /* ignore */ }
-    throw e;
-  }
-  await dir.removeEntry(tmpName);
-}
-
-export function needsMigration(): boolean {
-  return !localStorage.getItem('lokl_storage_migrated');
-}
-
-export function markMigrated(): void {
-  localStorage.setItem('lokl_storage_migrated', '1');
+export function isNativeSupported(): boolean {
+  return 'showDirectoryPicker' in window;
 }
 
 export interface ImportReport {
@@ -125,7 +84,7 @@ function warnBeforeUnload(e: BeforeUnloadEvent) {
 /** "README.MD" / "notes.markdown" → the ".md" id the rest of the app expects. */
 const MARKDOWN_EXT = /\.(md|markdown)$/i;
 function noteIdFor(path: string): string {
-  return safeNoteId(path.replace(MARKDOWN_EXT, '.md'));
+  return safeNoteId(nfc(path).replace(MARKDOWN_EXT, '.md'));
 }
 
 // Import all markdown files from a FSAA directory into PouchDB.
@@ -179,7 +138,7 @@ async function importFiles(
           // (a trashed note of that name is parked by putNote, not lost)
           await putNote(id, content);
           report.imported++;
-          if (id !== path) report.renamed.push({ from: path, to: id });
+          if (id !== nfc(path)) report.renamed.push({ from: path, to: id });
         } else if (existing.content === content || alreadyKept.has(`${id}\u0000${content}`)) {
           report.unchanged++;
         } else {
@@ -233,13 +192,14 @@ async function rawGet(id: string): Promise<NoteDoc | null> {
 
 /** One line for the UI: "Imported 7 files. Renamed 2 (_a.md → -a.md, …). Skipped 1 (x.md)." */
 export function describeImport(r: ImportReport): string {
-  const list = (items: string[]) => items.slice(0, 5).join(', ') + (items.length > 5 ? `, +${items.length - 5} more` : '');
-  let msg = `Imported ${r.imported} file${r.imported === 1 ? '' : 's'}.`;
-  if (r.unchanged) msg += ` ${r.unchanged} already in the vault.`;
-  if (r.conflicts.length) msg += ` ${r.conflicts.length} differ from a note already here — kept as conflict copies: ${list(r.conflicts.map((x) => x.path))}.`;
-  if (r.renamed.length) msg += ` Renamed ${r.renamed.length} (ids end in ".md" and can't start with "_"): ${list(r.renamed.map((x) => `${x.from} → ${x.to}`))}.`;
-  if (r.skipped.length) msg += ` Skipped ${r.skipped.length}: ${list(r.skipped.map((x) => `${x.path} (${x.reason})`))}.`;
-  return msg;
+  const m = t.value.msg;
+  const list = (items: string[]) => items.slice(0, 5).join(', ') + (items.length > 5 ? `, ${tf(m.andMore, { n: items.length - 5 })}` : '');
+  const parts = [r.imported === 1 ? m.importedOne : tf(m.importedMany, { n: r.imported })];
+  if (r.unchanged) parts.push(tf(m.alreadyInVault, { n: r.unchanged }));
+  if (r.conflicts.length) parts.push(tf(m.conflictsKept, { n: r.conflicts.length, list: list(r.conflicts.map((x) => x.path)) }));
+  if (r.renamed.length) parts.push(tf(m.renamedList, { n: r.renamed.length, list: list(r.renamed.map((x) => `${x.from} → ${x.to}`)) }));
+  if (r.skipped.length) parts.push(tf(m.skippedList, { n: r.skipped.length, list: list(r.skipped.map((x) => `${x.path} (${x.reason})`)) }));
+  return parts.join(' ');
 }
 
 /** Show the outcome — always: a partial import used to look complete. */
@@ -267,30 +227,4 @@ async function collectFiles(
   }
 
   return result;
-}
-
-// Export all notes from PouchDB to FSAA directory
-export async function exportToFSAA(
-  dirHandle: FileSystemDirectoryHandle,
-  onProgress?: (current: number, total: number) => void
-): Promise<number> {
-  const notes = await listNotes();
-  let exported = 0;
-
-  for (const note of notes) {
-    const parts = note._id.split('/');
-    let currentDir = dirHandle;
-
-    // Create subdirectories
-    for (let i = 0; i < parts.length - 1; i++) {
-      currentDir = await currentDir.getDirectoryHandle(parts[i], { create: true });
-    }
-
-    const fileName = parts[parts.length - 1];
-    await atomicWrite(currentDir, fileName, note.content);
-    exported++;
-    onProgress?.(exported, notes.length);
-  }
-
-  return exported;
 }

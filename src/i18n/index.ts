@@ -39,3 +39,8 @@ export function setLang(lang: string) {
   localStorage.setItem('lokl-lang', lang);
   document.documentElement.lang = lang;
 }
+
+/** Fill the {name} slots of a message. */
+export function tf(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+}

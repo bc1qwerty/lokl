@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'preact/hooks';
-import { currentFileContent, currentFilePath } from '../lib/store';
+import { useEffect, useMemo, useState } from 'preact/hooks';
+import { currentFileContent, currentFilePath, allFilePaths } from '../lib/store';
 import { renderMarkdown } from '../lib/markdown';
 import { t } from '../i18n';
 
@@ -37,6 +37,11 @@ export function Preview({ onNavigate }: Props) {
     if (path) onNavigate(path);
   }
 
+  // Not on every render: a sync status change or a toast re-rendered the pane and re-parsed a
+  // large note each time. The note list is a dependency because it decides which [[links]] resolve.
+  const paths = allFilePaths.value;
+  const html = useMemo(() => renderMarkdown(content), [content, paths]);
+
   if (!currentFilePath.value) {
     return (
       <div class="preview-pane" style="display:flex;align-items:center;justify-content:center;color:var(--text-muted)">
@@ -44,8 +49,6 @@ export function Preview({ onNavigate }: Props) {
       </div>
     );
   }
-
-  const html = renderMarkdown(content);
 
   return (
     <div class="preview-pane" onClick={handleClick}>

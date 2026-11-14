@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { updateLinksForFile, resetLinkIndex } from '../../src/lib/markdown';
+import { updateLinksForFile, resetLinkIndex, resolveWikiLink, renderMarkdown } from '../../src/lib/markdown';
 import { backlinksIndex, wikilinksIndex, fileTree } from '../../src/lib/store';
 import type { FileEntry } from '../../src/types';
 
@@ -53,5 +53,28 @@ describe('markdown link indexing', () => {
     const back = backlinksIndex.value.get('b.md');
     const arr = back instanceof Set ? [...back] : Array.isArray(back) ? back : [];
     expect(arr).not.toContain('a.md');
+  });
+});
+
+describe('unicode form', () => {
+  it('a typed [[link]] finds a note whose id was imported decomposed (NFD), and the reverse', () => {
+    const nfd = '한글노트.md'.normalize('NFD');
+    setKnownFiles(nfd, 'sub/café.md');
+    expect(resolveWikiLink('한글노트')).toBe(nfd);
+    expect(resolveWikiLink('한글노트.md')).toBe(nfd);
+    expect(resolveWikiLink('café'.normalize('NFD'))).toBe('sub/café.md');
+  });
+});
+
+describe('rendered links', () => {
+  it('an external link opens in a new tab; a wiki-link stays in the app', () => {
+    setKnownFiles('a.md');
+    const html = renderMarkdown('[site](https://example.com) and [[a]] and [rel](other.md)');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const [ext, wiki, rel] = Array.from(doc.querySelectorAll('a'));
+    expect(ext.getAttribute('target')).toBe('_blank');
+    expect(ext.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(wiki.hasAttribute('target')).toBe(false);
+    expect(rel.hasAttribute('target')).toBe(false);
   });
 });

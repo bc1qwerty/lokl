@@ -1,16 +1,17 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { authState } from '../lib/store';
+import { authState, syncState } from '../lib/store';
 import { notifySubscriptionChanged } from '../lib/sync-controller';
+import { t, tf } from '../i18n';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
 const PLANS = [
-  { id: '1m', label: '1 Month', sats: 5000 },
-  { id: '3m', label: '3 Months', sats: 10000, badge: 'Save 33%' },
-  { id: '6m', label: '6 Months', sats: 20000, badge: 'Save 33%' },
-  { id: '1y', label: '1 Year', sats: 30000, badge: 'Best value' },
-];
+  { id: '1m', label: 'plan1m', sats: 5000 },
+  { id: '3m', label: 'plan3m', sats: 10000, badge: 'save33' },
+  { id: '6m', label: 'plan6m', sats: 20000, badge: 'save33' },
+  { id: '1y', label: 'plan1y', sats: 30000, badge: 'bestValue' },
+] as const;
 
 interface Subscription {
   active: boolean;
@@ -35,7 +36,12 @@ export function SubscriptionPanel() {
   async function fetchSubscription() {
     try {
       const res = await fetch(`${API_URL}/lokl/subscription`, { credentials: 'include' });
-      if (res.ok) sub.value = await res.json();
+      if (res.ok) {
+        sub.value = await res.json();
+        // Paid while this panel was closed (the poll below dies with it), or renewed on another
+        // device: nobody else tells the controller. A running sync is not restarted by this.
+        if (sub.value?.active && syncState.value.status === 'offline') notifySubscriptionChanged();
+      }
     } catch { /* ignore */ }
   }
 
@@ -51,7 +57,7 @@ export function SubscriptionPanel() {
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.error || 'Failed');
+        throw new Error(data.error || t.value.msg.paymentFailed);
       }
       const data = await res.json();
       invoice.value = data;
@@ -69,9 +75,8 @@ export function SubscriptionPanel() {
               pollTimer.value = null;
               invoice.value = null;
               checking.value = false;
+              // 결제 확정은 auth 상태 변화가 아니라서 컨트롤러가 못 본다 — fetchSubscription 이 재평가를 부른다.
               await fetchSubscription();
-              // 결제 확정은 auth 상태 변화가 아니라서 컨트롤러가 못 본다 — 직접 재평가.
-              notifySubscriptionChanged();
             }
           }
         } catch { /* retry */ }
@@ -83,7 +88,7 @@ export function SubscriptionPanel() {
           clearInterval(pollTimer.value);
           pollTimer.value = null;
           checking.value = false;
-          error.value = 'Payment timeout';
+          error.value = t.value.msg.paymentTimeout;
         }
       }, 15 * 60 * 1000);
     } catch (e) {
@@ -94,15 +99,17 @@ export function SubscriptionPanel() {
   }
 
   if (authState.value.status !== 'authenticated') return null;
+  const m = t.value.msg;
 
   // Active subscription
   if (sub.value?.active) {
-    const planLabel = PLANS.find(p => p.id === sub.value!.plan)?.label || sub.value.plan;
+    const plan = PLANS.find(p => p.id === sub.value!.plan);
+    const planLabel = plan ? m[plan.label] : (sub.value.plan ?? '');
     return (
       <div style="margin-top:4px">
         <div style="display:flex; justify-content:space-between; align-items:center">
-          <span style="font-size:12px; color:#22c55e; font-weight:600">Active — {planLabel}</span>
-          <span style="font-size:11px; color:var(--text-muted)">{sub.value.daysLeft}d left</span>
+          <span style="font-size:12px; color:#22c55e; font-weight:600">{tf(m.subActive, { plan: planLabel })}</span>
+          <span style="font-size:11px; color:var(--text-muted)">{tf(m.daysLeft, { n: sub.value.daysLeft ?? 0 })}</span>
         </div>
       </div>
     );
@@ -112,7 +119,7 @@ export function SubscriptionPanel() {
   if (invoice.value) {
     return (
       <div style="margin-top:8px">
-        <p style="font-size:12px; color:var(--text-muted); margin:0 0 6px">Pay with Lightning:</p>
+        <p style="font-size:12px; color:var(--text-muted); margin:0 0 6px">{m.payLightning}</p>
         {invoice.value.qr && window.innerWidth >= 768 && (
           <div style="text-align:center; margin-bottom:8px">
             <img src={invoice.value.qr} alt="Lightning QR" width="200" height="200" style="border-radius:8px" />
@@ -127,13 +134,13 @@ export function SubscriptionPanel() {
         />
         <div style="display:flex; gap:4px; margin-top:4px">
           <button class="btn-secondary" style="font-size:11px; padding:2px 6px; flex:1"
-            onClick={() => navigator.clipboard.writeText(invoice.value!.paymentRequest)}>Copy Invoice</button>
+            onClick={() => navigator.clipboard.writeText(invoice.value!.paymentRequest)}>{m.copyInvoice}</button>
           <a href={`lightning:${invoice.value.paymentRequest}`} class="btn-primary"
-            style="font-size:11px; padding:2px 6px; flex:1; text-align:center; text-decoration:none">Open Wallet</a>
+            style="font-size:11px; padding:2px 6px; flex:1; text-align:center; text-decoration:none">{m.openWallet}</a>
         </div>
-        {checking.value && <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0">Waiting for payment...</p>}
+        {checking.value && <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0">{m.waitingPayment}</p>}
         <button class="btn-secondary" style="font-size:11px; padding:2px 6px; margin-top:4px; width:100%"
-          onClick={() => { invoice.value = null; checking.value = false; if (pollTimer.value) { clearInterval(pollTimer.value); pollTimer.value = null; } }}>Cancel</button>
+          onClick={() => { invoice.value = null; checking.value = false; if (pollTimer.value) { clearInterval(pollTimer.value); pollTimer.value = null; } }}>{t.value.common.cancel}</button>
       </div>
     );
   }
@@ -141,7 +148,7 @@ export function SubscriptionPanel() {
   // Plan selection
   return (
     <div style="margin-top:8px">
-      <p style="font-size:11px; color:var(--text-muted); margin:0 0 6px">Subscribe to enable cloud sync:</p>
+      <p style="font-size:11px; color:var(--text-muted); margin:0 0 6px">{m.subscribePrompt}</p>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px">
         {PLANS.map(plan => (
           <button
@@ -151,9 +158,9 @@ export function SubscriptionPanel() {
             disabled={loading.value}
             onClick={() => handleSubscribe(plan.id)}
           >
-            <div style="font-weight:600">{plan.label}</div>
+            <div style="font-weight:600">{m[plan.label]}</div>
             <div style="color:var(--text-muted); font-size:10px">{plan.sats.toLocaleString()} sats</div>
-            {plan.badge && <div style="font-size:9px; color:#f59e0b">{plan.badge}</div>}
+            {'badge' in plan && <div style="font-size:9px; color:#f59e0b">{m[plan.badge]}</div>}
           </button>
         ))}
       </div>
