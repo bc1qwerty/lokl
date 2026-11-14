@@ -4,13 +4,35 @@
 // 서버(api.txid.uk /lokl/db)는 구독을 자체 검증하므로 이 게이트는 UX 용이다
 // — 구독 없이 startSync 를 불러도 서버가 거부해 에러 상태만 띄운다.
 import { effect } from '@preact/signals';
-import { authState } from './store';
+import { authState, syncState } from './store';
 import { startSync, stopSync, onSubscriptionLost } from './sync';
 import { dbEpoch } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
 
 let checkSeq = 0;
+
+// 로컬 DB 는 브라우저당 하나라, 다른 계정으로 로그인해 동기화가 켜지면 앞 계정의 노트가
+// 새 계정 서버로 올라가고 두 계정의 노트가 섞인다. 마지막으로 동기화한 계정을 기억해 두고,
+// 달라지면 켜기 전에 한 번 묻는다. 거절해도 로컬 노트는 그대로다(동기화만 꺼 둔다).
+const SYNC_OWNER_NAME = 'lokl-sync-owner';
+let declinedFor: string | null = null;
+
+function ownerAllows(pubkey: string | undefined): boolean {
+  if (!pubkey) return true;
+  let owner: string | null = null;
+  try { owner = localStorage.getItem(SYNC_OWNER_NAME); } catch { return true; }
+  if (owner && owner !== pubkey) {
+    if (declinedFor === pubkey) return false;
+    const ok = typeof confirm === 'function' && confirm(
+      'The notes in this browser were synced with a different account. Sync them into this account too? Both accounts\' notes will be merged. Cancel keeps sync off; your notes stay in this browser.',
+    );
+    if (!ok) { declinedFor = pubkey; return false; }
+  }
+  declinedFor = null;
+  try { localStorage.setItem(SYNC_OWNER_NAME, pubkey); } catch { /* 기억 못 해도 동기화는 한다 */ }
+  return true;
+}
 
 async function hasActiveSubscription(): Promise<boolean> {
   try {
@@ -32,7 +54,10 @@ async function evaluate(): Promise<void> {
   const active = await hasActiveSubscription();
   // 확인 중에 로그아웃/재로그인이 겹치면 낡은 응답으로 켜고 끄지 않는다.
   if (seq !== checkSeq) return;
-  if (active) {
+  if (active && !ownerAllows(authState.value.pubkey)) {
+    stopSync();
+    syncState.value = { status: 'error', error: 'Sync is off: these notes belong to another account' };
+  } else if (active) {
     startSync();
   } else {
     stopSync();

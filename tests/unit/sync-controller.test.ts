@@ -21,6 +21,7 @@ beforeEach(() => {
   __setRemoteFactory(() => freshDB('remote') as unknown as PouchDB.Database<NoteDoc>);
   authState.value = { status: 'anonymous' };
   syncState.value = { status: 'offline' };
+  localStorage.removeItem('lokl-sync-owner');
 });
 
 afterEach(async () => {
@@ -103,5 +104,45 @@ describe('sync-controller', () => {
     dispose();
     dispose = null;
     expect(isSyncing()).toBe(false);
+  });
+  // 로컬 DB 는 계정과 무관하게 하나다 — 다른 계정으로 켜지면 두 계정의 노트가 섞여 올라간다.
+  it('다른 계정으로 로그인하면 묻고, 거절하면 켜지 않는다(다시 묻지도 않는다)', async () => {
+    mockSubscription(true);
+    const ask = vi.fn(() => false);
+    vi.stubGlobal('confirm', ask);
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    authState.value = { status: 'anonymous' };
+    await tick();
+    authState.value = { status: 'authenticated', pubkey: 'cd'.repeat(33) };
+    await tick();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(isSyncing()).toBe(false);
+    expect(syncState.value.status).toBe('error');
+    notifySubscriptionChanged();
+    await tick();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(isSyncing()).toBe(false);
+    // 원래 계정으로 돌아오면 묻지 않고 켠다.
+    authState.value = { status: 'anonymous' };
+    await tick();
+    authState.value = { status: 'authenticated', pubkey: 'ab'.repeat(33) };
+    await tick();
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(isSyncing()).toBe(true);
+  });
+
+  it('다른 계정이어도 승낙하면 켜고 그 계정을 기억한다', async () => {
+    mockSubscription(true);
+    localStorage.setItem('lokl-sync-owner', 'ab'.repeat(33));
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    dispose = initSyncController();
+    authState.value = { status: 'authenticated', pubkey: 'cd'.repeat(33) };
+    await tick();
+    expect(isSyncing()).toBe(true);
+    expect(localStorage.getItem('lokl-sync-owner')).toBe('cd'.repeat(33));
   });
 });
