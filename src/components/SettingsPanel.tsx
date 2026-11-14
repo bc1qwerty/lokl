@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { currentLang, setLang, supportedLangs, langLabels } from '../i18n/index';
 import { exportJSON, exportZIP, importJSON } from '../lib/backup';
 import { listTrash, purgeTrashed } from '../lib/db';
+import { wakeSync } from '../lib/sync';
 import { toast } from '../lib/toast';
 import { settleOpenNote } from '../lib/autosave';
 import { isNativeSupported } from '../lib/fs';
@@ -221,6 +222,7 @@ export function SettingsPanel() {
                   failed++;
                 }
               }
+              if (purged) wakeSync();
               if (failed) toast.error(`Could not delete ${failed} of ${trashed.length} notes.`);
               toast.success(t.value.settings.data.purgedCount.replace('{n}', String(purged)));
             }}>{str.data.emptyTrash}</button>

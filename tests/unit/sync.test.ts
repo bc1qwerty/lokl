@@ -2,18 +2,23 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { freshDB } from '../helpers/memory-db';
 import { setDB, getDB, putNote, listConflicts } from '../../src/lib/db';
 import type { NoteDoc } from '../../src/lib/db';
-import { startSync, stopSync, isSyncing, onPaused, __setRemoteFactory } from '../../src/lib/sync';
+import { startSync, stopSync, isSyncing, onPaused, wakeSync, onSubscriptionLost, describeSyncError, __setRemoteFactory, __setSyncTiming } from '../../src/lib/sync';
+import { toasts } from '../../src/lib/toast';
 import { syncState } from '../../src/lib/store';
 
 beforeEach(() => {
   setDB(freshDB() as unknown as PouchDB.Database<NoteDoc>);
   __setRemoteFactory(() => freshDB('remote') as unknown as PouchDB.Database<NoteDoc>);
   syncState.value = { status: 'offline' };
+  toasts.value = [];
+  __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 20 });
 });
 
 afterEach(() => {
   stopSync();
   __setRemoteFactory(null);
+  onSubscriptionLost(null);
+  __setSyncTiming(null);
 });
 
 describe('sync state machine', () => {
@@ -168,5 +173,115 @@ describe('a failing replication reaches the sync state through the real events',
     startSync();
     await until(() => syncState.value.status === 'synced');
     expect(syncState.value.lastSynced).toBeInstanceOf(Date);
+  });
+});
+
+// 2026-11-14: live push sent every save on its own, retried a refused write about once a second
+// for good (PouchDB resets its backoff on every 'active'), and stacked one sticky toast per retry.
+describe('push pacing, backoff and refused writes', () => {
+  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+  async function until(cond: () => boolean | Promise<boolean>, ms = 4000) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (await cond()) return;
+      await wait(15);
+    }
+    throw new Error(`condition not met; state=${JSON.stringify(syncState.value)}`);
+  }
+  function countingRemote(name: string, reject?: (docs: unknown[]) => unknown) {
+    const remoteDB = freshDB(name) as unknown as PouchDB.Database<NoteDoc>;
+    const real = remoteDB.bulkDocs.bind(remoteDB);
+    const calls: number[] = [];
+    (remoteDB as any).bulkDocs = (req: any, ...rest: unknown[]) => {
+      const docs = Array.isArray(req) ? req : req.docs;
+      // the conflict resolver and the replication checkpoint do not go through here with notes
+      calls.push(docs.length);
+      const err = reject?.(docs);
+      return err ? Promise.reject(err) : (real as any)(req, ...rest);
+    };
+    __setRemoteFactory(() => remoteDB);
+    return { remoteDB, calls };
+  }
+
+  it('a burst of saves leaves in one push, not one per save', async () => {
+    const { remoteDB, calls } = countingRemote('remote-burst');
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    const before = calls.length;
+    for (let i = 0; i < 8; i++) { await putNote('burst.md', `v${i}`); await wait(10); }
+    expect(syncState.value.status).toBe('syncing'); // unsent edits are not "Synced"
+    await until(async () => (await remoteDB.get('burst.md').catch(() => null) as any)?.content === 'v7');
+    await until(() => syncState.value.status === 'synced');
+    expect(calls.length - before).toBeLessThanOrEqual(2);
+  });
+
+  it('steady saving does not postpone the push forever', async () => {
+    const { remoteDB } = countingRemote('remote-steady');
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    let stop = false;
+    const typing = (async () => { for (let i = 0; !stop; i++) { await putNote('steady.md', `s${i}`); await wait(10); } })();
+    try {
+      await until(async () => !!(await remoteDB.get('steady.md').catch(() => null)), 2000);
+    } finally { stop = true; await typing; }
+  });
+
+  it('a full sync quota: one toast, retries back off, local saves do not shorten the wait', async () => {
+    const { calls } = countingRemote('remote-quota', () => ({ status: 413, name: 'too_large', code: 'STORAGE_LIMIT', message: 'full' }));
+    await putNote('q.md', 'over');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    for (let i = 0; i < 10; i++) { await putNote('q.md', `more ${i}`); await wait(60); }
+    // 20ms doubling: 20+40+80+160+320 = 620ms for five retries. The old loop made dozens.
+    expect(calls.length).toBeLessThanOrEqual(7);
+    expect(toasts.value.filter(t => /storage full/i.test(t.message))).toHaveLength(1);
+    expect(syncState.value.error).toMatch(/empty the trash/);
+  });
+
+  it('wakeSync retries at once after space was freed', async () => {
+    let full = true;
+    const { remoteDB } = countingRemote('remote-wake', () => (full ? { status: 413, name: 'too_large', code: 'STORAGE_LIMIT', message: 'full' } : null));
+    __setSyncTiming({ debounce: 20, interval: 150, backoffBase: 60_000 });
+    await putNote('w.md', 'waiting');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    full = false;
+    await wait(100);
+    expect(syncState.value.status).toBe('error'); // still waiting out the backoff
+    wakeSync();
+    await until(() => syncState.value.status === 'synced');
+    expect(((await remoteDB.get('w.md')) as any).content).toBe('waiting');
+  });
+
+  it('a batch over the request limit is split until it fits', async () => {
+    const { remoteDB, calls } = countingRemote('remote-big', (docs) =>
+      (docs.length > 3 ? { status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' } : null));
+    for (let i = 0; i < 10; i++) await putNote(`b${i}.md`, `body ${i}`);
+    startSync();
+    await until(() => syncState.value.status === 'synced');
+    expect((await remoteDB.allDocs()).rows).toHaveLength(10);
+    expect(Math.max(...calls.filter(n => n <= 3))).toBeLessThanOrEqual(3);
+    expect(toasts.value).toHaveLength(0);
+  });
+
+  it('only a single note that does not fit is called too large', async () => {
+    countingRemote('remote-huge', () => ({ status: 413, name: 'too_large', code: 'REQUEST_TOO_LARGE', message: 'big' }));
+    await putNote('huge.md', 'x');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    expect(syncState.value.error).toBe('A note is too large to sync');
+  });
+
+  it('a lapsed subscription is named and reported once, not per retry', async () => {
+    countingRemote('remote-lapsed', () => ({ status: 403, name: 'forbidden', code: 'NO_SUBSCRIPTION', message: 'Subscription required' }));
+    let lost = 0;
+    onSubscriptionLost(() => { lost++; });
+    await putNote('l.md', 'x');
+    startSync();
+    await until(() => syncState.value.status === 'error');
+    await wait(300); // several retries
+    expect(syncState.value.error).toBe('Sync subscription ended');
+    expect(lost).toBeLessThanOrEqual(1);
+    expect(describeSyncError({ status: 403 })).toBe('Sync failed — will retry');
   });
 });

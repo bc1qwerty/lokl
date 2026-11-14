@@ -1,6 +1,7 @@
 import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { listTrash, restoreTrashed, purgeTrashed } from '../lib/db';
+import { wakeSync } from '../lib/sync';
 import type { TrashAction } from '../lib/db';
 import { toast } from '../lib/toast';
 import type { NoteDoc } from '../lib/db';
@@ -34,6 +35,8 @@ export function TrashPanel() {
   async function act(id: string, op: (id: string) => Promise<TrashAction>) {
     try {
       const result = await op(id);
+      // A sync stopped on the storage limit is waiting out a backoff — space was just freed.
+      if (op === purgeTrashed && result === 'done') wakeSync();
       if (result === 'not-trashed') toast.info(`"${id}" was already restored — left untouched.`);
       else if (result === 'gone') toast.info(`"${id}" is no longer in the trash.`);
     } catch (e: any) {

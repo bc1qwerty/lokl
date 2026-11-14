@@ -100,3 +100,49 @@ test('"New File" with an existing name opens that note instead of blanking it', 
   await expect(page.getByRole('heading', { name: 'New File' })).not.toBeVisible({ timeout: 5_000 });
   await expect(page.locator('.cm-content')).toContainText('do not lose me');
 });
+
+// What IndexedDB holds right now, without going through the app.
+async function storedRevisions(page: Page, id: string): Promise<string[]> {
+  return page.evaluate((docId) => new Promise<string[]>((resolve, reject) => {
+    const open = indexedDB.open('_pouch_lokl');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const all = open.result.transaction('by-sequence').objectStore('by-sequence').getAll();
+      all.onerror = () => reject(all.error);
+      all.onsuccess = () => {
+        open.result.close();
+        resolve((all.result as Array<{ _doc_id_rev: string; content?: string }>)
+          .filter(r => r._doc_id_rev.startsWith(`${docId}::`))
+          .map(r => r.content ?? ''));
+      };
+    };
+  }), id);
+}
+
+// 2026-11-14: the debounce re-armed on every keystroke, so text typed without a one-second
+// pause was never written. Sixty seconds of steady typing, then a crash: nothing left.
+test('steady typing is written to storage while the user is still typing', async ({ page }) => {
+  await freshStart(page);
+  await createNote(page, 'steady');
+  const editor = page.locator('.cm-content');
+  await editor.click();
+  // ~10 s with a key every 250 ms — never idle long enough for the debounce
+  const typing = editor.pressSequentially('k'.repeat(40), { delay: 250 });
+  await page.waitForTimeout(7500);
+  const mid = await storedRevisions(page, 'steady.md');
+  await typing;
+  expect(Math.max(...mid.map(c => c.length))).toBeGreaterThan(5);
+});
+
+// Every save used to keep the previous full text for good (150 saves of a 200KB note = 30MB),
+// and emptying the trash returned none of it.
+test('saving again does not keep the superseded text in storage', async ({ page }) => {
+  await freshStart(page);
+  await createNote(page, 'compact');
+  for (const word of ['one ', 'two ', 'three ']) {
+    await type(page, word);
+    await expect(page.locator('.toolbar')).not.toContainText('Unsaved', { timeout: 5_000 });
+  }
+  await expect.poll(() => storedRevisions(page, 'compact.md'), { timeout: 5_000 }).toHaveLength(1);
+  expect((await storedRevisions(page, 'compact.md'))[0]).toContain('three');
+});

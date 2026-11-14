@@ -46,6 +46,40 @@ describe('autosave', () => {
     expect(['saved', 'clean']).toContain(saveStatus.value);
   });
 
+  // 2026-11-14: every keystroke re-armed the debounce, so text typed without a pause of `delay`
+  // was never written — a minute of typing was one crash away from gone.
+  it('steady typing is saved within the max wait even without a pause', async () => {
+    stop();
+    stop = startAutosave(200, undefined, undefined, 250);
+    await putNote('a.md', '');
+    await open('a.md');
+    let typed = '';
+    const end = Date.now() + 900;
+    while (Date.now() < end) { typed += 'x'; currentFileContent.value = typed; await wait(40); }
+    // still typing (never 200ms idle), yet most of it is already stored
+    const stored = (await getNote('a.md'))!.content;
+    expect(stored.length).toBeGreaterThan(5);
+    await until(async () => (await getNote('a.md'))?.content === typed);
+  });
+
+  it('a tab going hidden saves at once', async () => {
+    stop();
+    stop = startAutosave(60_000);
+    await putNote('a.md', '');
+    await open('a.md');
+    currentFileContent.value = 'about to be hidden';
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await until(async () => (await getNote('a.md'))?.content === 'about to be hidden');
+    } finally {
+      delete (document as any).visibilityState;
+    }
+    currentFileContent.value = 'and leaving';
+    window.dispatchEvent(new Event('pagehide'));
+    await until(async () => (await getNote('a.md'))?.content === 'and leaving');
+  });
+
   it('typing keeps one pending save, which carries the latest text', async () => {
     await putNote('a.md', '');
     await open('a.md');

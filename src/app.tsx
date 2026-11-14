@@ -8,7 +8,7 @@ import {
   isLoading, addTab, closeTab, settings, currentFileContent,
 } from './lib/store';
 import { saveStatus, startAutosave, flushPendingSave, settleOpenNote, showNote, applyChange, expectLocalRemoval } from './lib/autosave';
-import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch } from './lib/db';
+import { initDB, getNote, putNote, deleteNote, listNotes, buildFileTree, watchChanges, getDB, sweepTrash, atomicRename, dbEpoch, compactOnce } from './lib/db';
 import { setAllLinks } from './lib/markdown';
 import { indexFile, clearIndex, removeFromIndex } from './lib/search';
 import { indexChange, refreshLinks, treeIsStale, takeChanges } from './lib/reindex';
@@ -127,7 +127,7 @@ export function App() {
       );
       rememberInterruptedToast(reminder);
     });
-    sweepTrash().catch(e => console.error('sweepTrash failed:', e));
+    sweepTrash().catch(e => console.error('sweepTrash failed:', e)).then(() => compactOnce());
     const stop = startQuotaMonitor();
     const stopSyncController = initSyncController();
     // Check if DB has any notes — skip WelcomeScreen if so

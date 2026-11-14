@@ -10,6 +10,9 @@ export type SaveStatus = 'clean' | 'dirty' | 'saving' | 'saved';
 export const saveStatus = signal<SaveStatus>('clean');
 
 export const AUTOSAVE_DELAY_MS = 1000;
+/** Longest unsaved stretch while the user keeps typing. The debounce alone never fired during
+ *  steady typing — a minute of text was one crash away from gone. */
+export const AUTOSAVE_MAX_WAIT_MS = 5000;
 /** After a failed save, try again on our own — the user may not type again. */
 export const SAVE_RETRY_MS = 5000;
 const SAVE_TIMEOUT_MS = 20_000;
@@ -24,6 +27,10 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryBase = SAVE_RETRY_MS;
 let retryDelay = SAVE_RETRY_MS;
 let failStreak = 0;
+let maxWait = AUTOSAVE_MAX_WAIT_MS;
+// When the text that is waiting to be saved first became dirty.
+let dirtySince: number | null = null;
+let persistAsked = false;
 // _rev of the note as the editor loaded (or last saved) it — see PutOptions.baseRev.
 let openRev: { path: string; rev: string | undefined } | null = null;
 // Saves run one at a time. Two overlapping saves of the same note both carry the
@@ -45,6 +52,7 @@ function clearTimers(): void {
  *  rename): the note opens dirty and the debounce saves it. */
 export function showNote(path: string | null, content: string, rev?: string, draft?: string): void {
   clearTimers();
+  dirtySince = null;
   batch(() => {
     savedContent.value = content;
     currentFileContent.value = draft ?? content;
@@ -136,6 +144,7 @@ async function doSave(path: string, content: string): Promise<boolean> {
     indexFile(path, content);
     failStreak = 0;
     retryDelay = retryBase;
+    askPersistence();
     if (currentFilePath.peek() === path) {
       if (openRev?.path === path) openRev.rev = rev;
       // `content` is the text as of when this save started. If the user typed
@@ -176,6 +185,15 @@ async function doSave(path: string, content: string): Promise<boolean> {
   }
 }
 
+// The browser database is the only copy for anyone not syncing, and browsers evict
+// non-persistent storage under pressure. Asked once there is something to lose; the answer
+// (or a browser that does not ask at all) changes nothing else.
+function askPersistence(): void {
+  if (persistAsked) return;
+  persistAsked = true;
+  try { void navigator.storage?.persist?.().catch(() => undefined); } catch { /* not available */ }
+}
+
 // Without this a failed save was only retried on the next keystroke; a user who
 // stopped typing kept "Unsaved" until they closed the tab.
 function scheduleRetry(path: string): void {
@@ -202,6 +220,7 @@ export function saveNote(path: string, content: string): Promise<boolean> {
  *  note or a tab closes. Resolves false if the save failed. */
 export async function flushPendingSave(): Promise<boolean> {
   clearTimers();
+  dirtySince = null;
   // A save already in flight must land first, or the caller acts on a note
   // that is about to be written again.
   await chain;
@@ -224,8 +243,9 @@ export async function settleOpenNote(): Promise<boolean> {
 }
 
 /** Debounced auto-save. Returns the disposer. */
-export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number = SAVE_RETRY_MS, timeoutMs: number = SAVE_TIMEOUT_MS): () => void {
+export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number = SAVE_RETRY_MS, timeoutMs: number = SAVE_TIMEOUT_MS, maxWaitMs: number = AUTOSAVE_MAX_WAIT_MS): () => void {
   retryBase = retryDelay = retryMs;
+  maxWait = maxWaitMs;
   saveTimeout = timeoutMs;
   const dispose = effect(() => {
     const dirty = isDirty.value;
@@ -234,17 +254,30 @@ export function startAutosave(delay: number = AUTOSAVE_DELAY_MS, retryMs: number
 
     clearTimers();
     if (!dirty || !path) {
+      dirtySince = null;
       if (saveStatus.peek() === 'dirty') saveStatus.value = 'clean';
       return;
     }
     if (saveStatus.peek() !== 'saving') saveStatus.value = 'dirty';
+    const now = Date.now();
+    dirtySince ??= now;
     saveTimer = setTimeout(() => {
       saveTimer = null;
+      dirtySince = null;
       void saveNote(path, content);
-    }, delay);
+    }, Math.max(0, Math.min(delay, dirtySince + maxWait - now)));
   });
+  // A hidden tab may be frozen or discarded without another event (mobile, tab switch, close).
+  const flushHidden = () => { if (document.visibilityState === 'hidden') void flushPendingSave(); };
+  const flushLeaving = () => { void flushPendingSave(); };
+  document.addEventListener('visibilitychange', flushHidden);
+  window.addEventListener('pagehide', flushLeaving);
   return () => {
     dispose();
+    document.removeEventListener('visibilitychange', flushHidden);
+    window.removeEventListener('pagehide', flushLeaving);
+    dirtySince = null;
+    maxWait = AUTOSAVE_MAX_WAIT_MS;
     clearTimers();
     if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
     failStreak = 0;

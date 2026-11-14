@@ -5,7 +5,7 @@
 // — 구독 없이 startSync 를 불러도 서버가 거부해 에러 상태만 띄운다.
 import { effect } from '@preact/signals';
 import { authState } from './store';
-import { startSync, stopSync } from './sync';
+import { startSync, stopSync, onSubscriptionLost } from './sync';
 import { dbEpoch } from './db';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://api.txid.uk';
@@ -58,11 +58,14 @@ export function initSyncController(): () => void {
   });
   // 구독 확인 fetch 순단(오프라인 기동·api 순단)이 '구독 없음'으로 그 세션
   // 내내 굳지 않도록, 네트워크 복귀 시 재평가한다.
+  // The server refused a sync request for lack of a subscription (it lapsed mid-session).
+  onSubscriptionLost(() => { void evaluate(); });
   const onOnline = () => { void evaluate(); };
   window.addEventListener('online', onOnline);
   return () => {
     dispose();
     window.removeEventListener('online', onOnline);
+    onSubscriptionLost(null);
     stopSync();
   };
 }

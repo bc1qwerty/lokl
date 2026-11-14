@@ -30,9 +30,26 @@ export const dbEpoch = signal(0);
 export function initDB(name = 'lokl'): PouchDB.Database<NoteDoc> {
   if (!db) {
     dbName = name;
-    db = new PouchDB<NoteDoc>(name);
+    db = new PouchDB<NoteDoc>(name, DB_OPTIONS);
   }
   return db;
+}
+
+// Every save used to leave the previous full text behind for good: a 200KB note saved 150 times
+// held 30MB, and emptying the trash gave none of it back. Leaves (the current text and any
+// conflict branch) are kept; only superseded revisions' bodies go.
+const DB_OPTIONS = { auto_compaction: true };
+const COMPACTED_FLAG = 'lokl-compacted-v1';
+
+/** One sweep over what earlier versions left behind; auto_compaction covers every save after it. */
+export async function compactOnce(): Promise<void> {
+  try {
+    if (localStorage.getItem(COMPACTED_FLAG)) return;
+    await getDB().compact();
+    localStorage.setItem(COMPACTED_FLAG, '1');
+  } catch (e) {
+    console.warn('Compaction skipped:', e);
+  }
 }
 
 /** True for the errors a dead IndexedDB connection produces. The browser can
@@ -47,7 +64,7 @@ export function isConnectionLost(e: unknown): boolean {
 /** Replace a dead handle with a fresh connection to the same database. */
 export function reopenDB(): PouchDB.Database<NoteDoc> {
   const old = db;
-  db = new PouchDB<NoteDoc>(dbName);
+  db = new PouchDB<NoteDoc>(dbName, DB_OPTIONS);
   try { void (old as any)?.close?.().catch(() => undefined); } catch { /* already dead */ }
   dbEpoch.value++;
   return db;
