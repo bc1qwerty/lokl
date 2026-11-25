@@ -317,7 +317,10 @@ async function runPush(s: Session): Promise<void> {
     if (s.cancelled) return;
     s.pushing = false;
     s.pushErr = null;
-    s.pushFails = 0;
+    // A round that read nothing says nothing about whether the server takes writes again (another
+    // tab sent the note, or the change feed was read mid-write): resetting here let retries
+    // against a full quota start over at the shortest delay.
+    if ((res?.docs_read ?? 0) > 0) s.pushFails = 0;
     s.adapting = false;
     // A full batch got through: the link carries this much again. Without growing back, one slow
     // stretch left batches of a few notes (and long deadlines) for the rest of the session.
