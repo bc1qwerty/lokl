@@ -510,7 +510,7 @@ export function App() {
     const m = t.value.msg;
     return (
       <main class="welcome">
-        <div class="welcome-logo">Lokl</div>
+        <h1 class="welcome-logo">Lokl</h1>
         <p class="welcome-tagline">{tf(m.storageUnavailable, { error: dbFull.value ? m.storageFull : dbError.value })}</p>
         <p class="welcome-tagline">
           {m.notesNotDeleted}{dbFull.value ? '' : ` ${m.reloadRetry}`}
@@ -541,6 +541,8 @@ export function App() {
       </Sidebar>
 
       <main class="main-content">
+        {/* 페이지 제목(axe page-has-heading-one) — 보이는 제목은 사이드바의 금고 이름(h2)이다. */}
+        <h1 class="sr-only">Lokl</h1>
         <div style="display:flex; flex-direction:column; flex:1; min-width:0; overflow:hidden">
           <TabBar onTabClick={handleTabClick} onTabClose={handleTabClose} />
           <div style="display:flex; flex:1; overflow:hidden">

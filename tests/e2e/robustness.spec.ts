@@ -77,6 +77,9 @@ test.describe('no service worker', () => {
     await page.keyboard.press('Escape');
   
     // connection back: Retry (or, where the browser will not re-fetch a failed module, Reload) brings the editor
+    // The outage lasts a moment: public/heal.js re-fetches the failed chunk 300ms after the failure and reloads
+    // the page if it answers (a stale deploy looks the same). Unblocking before that makes it reload under the click.
+    await page.waitForTimeout(800);
     blocked = false;
     await failed.getByRole('button', { name: 'Retry' }).click();
     const editor = page.locator('.cm-content');

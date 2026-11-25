@@ -97,7 +97,7 @@ export function WelcomeScreen({ onLoadComplete }: Props) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div class="welcome-logo">Lokl</div>
+      <h1 class="welcome-logo">Lokl</h1>
       <p class="welcome-tagline">{str.subtitle}</p>
 
       {progress.value ? (

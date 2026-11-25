@@ -48,8 +48,12 @@
   font-size: 48px;
   font-weight: 800;
   color: var(--accent);
-  margin-bottom: 8px;
+  margin: 0 0 8px; /* h1 의 기본 위 여백을 지운다 — 예전 div 와 같은 자리 */
   letter-spacing: -2px;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .welcome-tagline {
   font-size: 16px;
