@@ -52,6 +52,9 @@ export default defineConfig({
     include: ['pouchdb-browser'],
   },
   build: {
+    // 가장 큰 묶음은 codemirror(≈515kB) — 편집기를 열 때만 받는 지연 묶음이고 편집기에 통째로 필요하다(아래 manualChunks).
+    // 더 쪼개도 요청만 는다. 그보다 큰 묶음이 새로 생기면 여전히 경고가 뜨게 한도는 그 바로 위로.
+    chunkSizeWarningLimit: 600,
     target: 'es2022',
     commonjsOptions: {
       include: [/pouchdb/, /node_modules/],
